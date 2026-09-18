@@ -10,6 +10,7 @@ Following TDD methodology - these tests should FAIL initially (RED phase).
 
 import pytest
 import json
+import cv2
 import numpy as np
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch, mock_open
@@ -24,6 +25,31 @@ try:
 except ImportError:
     # Expected to fail in RED phase
     pass
+
+
+class RecordingImageGenerator:
+    """
+    Stand-in for a real image generator, injected through the public seam.
+
+    The manager itself is never patched: this writes actual image files to disk
+    so the OpenCV scoring, retry and reference-update logic all run for real.
+    """
+
+    def __init__(self, image_factory, color=(200, 40, 40)):
+        self._image_factory = image_factory
+        self.color = color
+        self.prompts: List[str] = []
+        self.paths: List[str] = []
+
+    async def __call__(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        path = self._image_factory(color=self.color)
+        self.paths.append(path)
+        return path
+
+    @property
+    def call_count(self) -> int:
+        return len(self.prompts)
 
 
 class TestVisualCoherenceSystem:
@@ -48,15 +74,36 @@ class TestVisualCoherenceSystem:
         return ["Naruto", "Sasuke", "Sakura"]
 
     @pytest.fixture
-    def mock_image_generator(self):
-        """Mock AI image generation function."""
-        generator = AsyncMock()
-        generator.return_value = "/fake/path/to/generated_image.png"
-        return generator
+    def image_factory(self, tmp_path):
+        """Write real image files to disk for OpenCV to read."""
+        counter = {"n": 0}
+
+        def _make(color=None, size=(240, 320), seed=None):
+            counter["n"] += 1
+            if seed is not None:
+                rng = np.random.default_rng(seed)
+                image = rng.integers(0, 256, (*size, 3), dtype=np.uint8)
+            else:
+                image = np.zeros((*size, 3), dtype=np.uint8)
+                image[:, :] = color if color is not None else (0, 0, 0)
+            path = tmp_path / f"image_{counter['n']}.png"
+            assert cv2.imwrite(str(path), image), "Test image should be written"
+            return str(path)
+
+        return _make
+
+    @pytest.fixture
+    def make_generator(self, image_factory):
+        """Factory for injectable recording image generators."""
+
+        def _make(color=(200, 40, 40)):
+            return RecordingImageGenerator(image_factory, color=color)
+
+        return _make
 
     @pytest.fixture
     def coherence_manager(self):
-        """Create VisualCoherenceManager instance."""
+        """Create VisualCoherenceManager instance (no generator injected)."""
         return VisualCoherenceManager(consistency_threshold=0.8)
 
     @pytest.mark.asyncio
@@ -200,62 +247,115 @@ class TestVisualCoherenceSystem:
 
     @pytest.mark.asyncio
     async def test_consistency_retry_mechanism(
-        self, coherence_manager, sample_episode_context, sample_characters
+        self, sample_episode_context, sample_characters, make_generator
     ):
         """
-        Test retry mechanism for low consistency scores.
+        Test retry mechanism for low consistency scores against real scoring.
 
-        RED PHASE: This test should FAIL initially.
+        Nothing on the manager is patched: an image generator is injected, it
+        writes real images, and the real OpenCV scoring decides whether to retry.
 
         Validates:
-        - System retries generation when consistency score is low (<0.8)
-        - Maximum 3 retry attempts are respected
+        - The first accepted image establishes real reference data
+        - System retries generation when the real consistency score is low
+        - Maximum retry attempts are respected
         - Progressive prompt enhancement between attempts
         - Final result is returned even if consistency threshold not met
         """
-        # Arrange
-        prompt = "Test scene for consistency"
-        mock_image_path = "/fake/generated/image.png"
+        # Arrange: a permissive threshold accepts the first render and seeds the
+        # episode palette, style template and character references.
+        generator = make_generator(color=(200, 40, 40))
+        manager = VisualCoherenceManager(
+            consistency_threshold=0.0, image_generator=generator
+        )
 
-        # Mock low consistency on first attempts, high on final
-        consistency_scores = [0.5, 0.6, 0.9]  # Third attempt succeeds
+        first = await manager.generate_consistent_image(
+            "Establishing shot", sample_characters, sample_episode_context
+        )
 
-        with patch.object(
-            coherence_manager, "_generate_with_ai", return_value=mock_image_path
-        ) as mock_generate:
-            with patch.object(
-                coherence_manager, "_evaluate_visual_consistency"
-            ) as mock_evaluate:
-                # Setup mock to return different scores for each attempt
-                mock_evaluate.side_effect = [
-                    VisualConsistencyMetrics(0.5, 0.5, 0.5, score)
-                    for score in consistency_scores
-                ]
+        assert generator.call_count == 1, "Should accept the first render"
+        assert first == generator.paths[0], "Should return the generator's path"
+        for character in sample_characters:
+            assert isinstance(
+                manager.character_references[character], np.ndarray
+            ), "Accepted image should become the character reference"
 
-                with patch.object(
-                    coherence_manager, "_update_reference_data"
-                ) as mock_update:
-                    # Act
-                    result = await coherence_manager.generate_consistent_image(
-                        prompt,
-                        sample_characters,
-                        sample_episode_context,
-                        max_attempts=3,
-                    )
+        # Act: demand near-perfect consistency, then feed the loop a wildly
+        # different image so the real scoring rejects every attempt.
+        manager.consistency_threshold = 0.95
+        generator.color = (20, 220, 60)
 
-                    # Assert
-                    assert (
-                        result == mock_image_path
-                    ), "Should return generated image path"
-                    assert (
-                        mock_generate.call_count == 3
-                    ), "Should call generation 3 times (2 retries)"
-                    assert (
-                        mock_evaluate.call_count == 3
-                    ), "Should evaluate consistency 3 times"
-                    assert (
-                        mock_update.call_count == 1
-                    ), "Should update reference data once (when successful)"
+        result = await manager.generate_consistent_image(
+            "Test scene for consistency",
+            sample_characters,
+            sample_episode_context,
+            max_attempts=3,
+        )
+
+        # Assert
+        assert generator.call_count == 4, "Should retry until max_attempts (1 + 3)"
+        assert result == generator.paths[-1], "Should return the last attempt's path"
+
+        retry_prompts = generator.prompts[1:]
+        assert (
+            "Test scene for consistency" in retry_prompts[0]
+        ), "Should keep the scene description"
+        assert (
+            retry_prompts[1] != retry_prompts[0]
+        ), "Prompt should be enhanced between attempts"
+        assert "Focus on:" in retry_prompts[1], "Enhancement should target weaknesses"
+        assert len(retry_prompts[2]) > len(
+            retry_prompts[1]
+        ), "Enhancement should be progressive"
+
+    @pytest.mark.asyncio
+    async def test_generation_requires_injected_image_generator(
+        self, coherence_manager, sample_episode_context, sample_characters
+    ):
+        """
+        The manager must not fabricate image paths when it cannot generate.
+
+        Validates:
+        - generate_consistent_image raises instead of returning a fake path
+        - The error explains what real integration requires
+        """
+        with pytest.raises(NotImplementedError, match="Inject an image generator"):
+            await coherence_manager.generate_consistent_image(
+                "A scene", sample_characters, sample_episode_context
+            )
+
+    @pytest.mark.asyncio
+    async def test_build_coherent_prompt_without_generator(
+        self, coherence_manager, sample_episode_context, sample_characters
+    ):
+        """
+        Prompt construction is usable on its own, with no image generator.
+
+        Validates:
+        - Scene, characters, style and theme are all folded into one prompt
+        - Known characters are marked as needing a consistent appearance
+        """
+        prompt = await coherence_manager.build_coherent_prompt(
+            "Naruto and Sasuke face off on the bridge",
+            sample_characters,
+            sample_episode_context,
+        )
+
+        assert "Naruto and Sasuke face off on the bridge" in prompt
+        for character in sample_characters:
+            assert character in prompt, f"{character} should appear in the prompt"
+        assert "anime" in prompt, "Should carry the episode visual style"
+        assert "friendship and rivalry" in prompt, "Should carry the episode theme"
+        assert "consistency" in prompt.lower()
+
+        # Known characters are described as requiring a consistent appearance
+        coherence_manager.character_references["Naruto"] = np.zeros(
+            (10, 10, 3), dtype=np.uint8
+        )
+        with_reference = await coherence_manager.build_coherent_prompt(
+            "Naruto eats ramen", ["Naruto"], sample_episode_context
+        )
+        assert "Naruto with consistent appearance" in with_reference
 
     @pytest.mark.asyncio
     async def test_prompt_enhancement_for_consistency(self, coherence_manager):
@@ -391,132 +491,132 @@ class TestVisualCoherenceSystem:
             ), "First image should establish style with score 1.0"
 
     @pytest.mark.asyncio
-    async def test_reference_data_management(self, coherence_manager):
+    async def test_reference_data_management(self, coherence_manager, image_factory):
         """
-        Test storage and updating of reference data.
-
-        RED PHASE: This test should FAIL initially.
+        Test storage and updating of reference data from a real image file.
 
         Validates:
         - Character reference images are stored correctly
-        - Episode color palettes are maintained
-        - Style templates are updated appropriately
-        - Reference data doesn't grow unbounded
+        - The stored reference matches the image on disk
+        - An unreadable path is reported instead of silently no-oping
         """
         # Arrange
-        image_path = "/fake/test/image.png"
         characters = ["TestChar1", "TestChar2"]
         episode_context = {"episode_id": "ref_test_episode"}
-        mock_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+        image_path = image_factory(color=(10, 120, 200))
 
-        with patch("cv2.imread", return_value=mock_image):
-            # Act
+        # Act
+        await coherence_manager._update_reference_data(
+            image_path, characters, episode_context
+        )
+
+        # Assert character references stored
+        expected = cv2.imread(image_path)
+        for char in characters:
+            assert (
+                char in coherence_manager.character_references
+            ), f"Character {char} should be stored in references"
+            stored = coherence_manager.character_references[char]
+            assert isinstance(
+                stored, np.ndarray
+            ), f"Character {char} reference should be numpy array"
+            assert np.array_equal(
+                stored, expected
+            ), f"Character {char} reference should match the image on disk"
+
+        # A path that cannot be read must fail loudly - silently skipping the
+        # update would leave the consistency feedback loop permanently inert.
+        with pytest.raises(ValueError, match="Could not load image"):
             await coherence_manager._update_reference_data(
-                image_path, characters, episode_context
+                "/nonexistent/image.png", characters, episode_context
             )
-
-            # Assert character references stored
-            for char in characters:
-                assert (
-                    char in coherence_manager.character_references
-                ), f"Character {char} should be stored in references"
-                assert isinstance(
-                    coherence_manager.character_references[char], np.ndarray
-                ), f"Character {char} reference should be numpy array"
 
     @pytest.mark.asyncio
     async def test_consistency_threshold_behavior(
-        self, sample_episode_context, sample_characters
+        self, sample_episode_context, sample_characters, make_generator
     ):
         """
         Test behavior with different consistency thresholds.
 
-        RED PHASE: This test should FAIL initially.
-
         Validates:
-        - Different threshold values affect retry behavior
-        - Higher thresholds require more retry attempts
-        - Lower thresholds accept images faster
         - Threshold bounds are respected (0.0-1.0)
+        - Lower thresholds accept images on the first attempt
+        - Higher thresholds keep retrying against the same real scoring
         """
-        # Test different threshold values
-        for threshold in [0.5, 0.8, 0.95]:
-            manager = VisualCoherenceManager(consistency_threshold=threshold)
+        # Threshold bounds are clamped
+        assert VisualCoherenceManager(consistency_threshold=1.5).consistency_threshold == 1.0
+        assert VisualCoherenceManager(consistency_threshold=-0.5).consistency_threshold == 0.0
 
-            with patch.object(manager, "_generate_with_ai") as mock_generate:
-                mock_generate.return_value = "/fake/image.png"
+        async def attempts_for(threshold: float) -> int:
+            """Run one seeded episode at `threshold` and count generation calls."""
+            generator = make_generator(color=(200, 40, 40))
+            manager = VisualCoherenceManager(
+                consistency_threshold=0.0, image_generator=generator
+            )
+            # Seed references/palette/style with the first accepted render
+            await manager.generate_consistent_image(
+                "seed scene", sample_characters, sample_episode_context
+            )
 
-                with patch.object(manager, "_evaluate_visual_consistency") as mock_eval:
-                    # For low threshold, return passing score immediately
-                    # For high threshold, return failing then passing score
-                    if threshold <= 0.5:
-                        mock_eval.side_effect = [
-                            VisualConsistencyMetrics(0.9, 0.9, 0.9, 0.9)
-                        ]
-                        expected_calls = 1
-                    else:
-                        mock_eval.side_effect = [
-                            VisualConsistencyMetrics(0.7, 0.7, 0.7, threshold - 0.1),
-                            VisualConsistencyMetrics(0.9, 0.9, 0.9, threshold + 0.1),
-                        ]
-                        expected_calls = 2
+            manager.consistency_threshold = threshold
+            generator.color = (20, 220, 60)  # visually inconsistent follow-up
+            await manager.generate_consistent_image(
+                "follow-up scene",
+                sample_characters,
+                sample_episode_context,
+                max_attempts=3,
+            )
+            return generator.call_count - 1  # discount the seeding render
 
-                    with patch.object(manager, "_update_reference_data"):
-                        # Act
-                        result = await manager.generate_consistent_image(
-                            "test prompt", sample_characters, sample_episode_context
-                        )
-
-                        # Assert
-                        assert result == "/fake/image.png", "Should return image path"
-                        assert mock_generate.call_count == expected_calls, (
-                            f"Should call generation {expected_calls} times "
-                            f"for threshold {threshold}"
-                        )
+        assert (
+            await attempts_for(0.0) == 1
+        ), "A permissive threshold should accept the first render"
+        assert (
+            await attempts_for(0.99) == 3
+        ), "A strict threshold should exhaust the retry budget"
 
     @pytest.mark.asyncio
     async def test_image_generation_integration(
-        self, coherence_manager, sample_episode_context, sample_characters
+        self, sample_episode_context, sample_characters, make_generator
     ):
         """
-        Test integration with AI image generation.
-
-        RED PHASE: This test should FAIL initially.
+        Test integration with an injected image generator.
 
         Validates:
-        - AI image generation is called with enhanced prompts
-        - Generation failures are handled gracefully
-        - Image paths are validated before processing
+        - The injected generator receives the enhanced prompt
+        - Its returned path is what the manager returns
         - Generation respects episode context and character data
+        - A generator returning a non-path is rejected, not passed on
         """
         # Arrange
         prompt = "Test scene generation"
+        generator = make_generator()
+        manager = VisualCoherenceManager(
+            consistency_threshold=0.0, image_generator=generator
+        )
 
-        with (
-            patch.object(coherence_manager, "_generate_with_ai") as mock_generate,
-            patch.object(
-                coherence_manager, "_evaluate_visual_consistency"
-            ) as mock_evaluate,
-            patch.object(coherence_manager, "_update_reference_data"),
-        ):
+        # Act
+        result = await manager.generate_consistent_image(
+            prompt, sample_characters, sample_episode_context
+        )
 
-            mock_generate.return_value = "/generated/test_image.png"
-            mock_evaluate.return_value = VisualConsistencyMetrics(0.9, 0.9, 0.9, 0.9)
+        # Assert
+        assert result == generator.paths[0], "Should return the generator's path"
+        assert generator.call_count == 1, "Should generate exactly once"
 
-            # Act
-            result = await coherence_manager.generate_consistent_image(
+        called_prompt = generator.prompts[0]
+        assert prompt in called_prompt, "Should preserve the scene description"
+        assert len(called_prompt) > len(prompt), "Prompt should be enhanced"
+        assert "anime" in called_prompt, "Should apply episode visual style"
+        for character in sample_characters:
+            assert character in called_prompt, "Should apply character context"
+
+        # A generator that returns something other than a path must be rejected
+        manager.image_generator = lambda _prompt: None
+        with pytest.raises(ValueError, match="must return a path"):
+            await manager.generate_consistent_image(
                 prompt, sample_characters, sample_episode_context
             )
-
-            # Assert
-            assert result == "/generated/test_image.png", "Should return generated path"
-            mock_generate.assert_called_once()
-
-            # Check that prompt was enhanced
-            called_prompt = mock_generate.call_args[0][0]
-            assert len(called_prompt) >= len(
-                prompt
-            ), "Prompt should be enhanced or maintained"
 
     @pytest.mark.asyncio
     async def test_visual_consistency_metrics_calculation(self, coherence_manager):
@@ -573,73 +673,62 @@ class TestVisualCoherenceSystem:
 
     @pytest.mark.asyncio
     async def test_performance_constraints_visual_coherence(
-        self, coherence_manager, sample_episode_context, sample_characters
+        self, sample_episode_context, sample_characters, image_factory
     ):
         """
         Test performance constraints for visual coherence system.
 
-        RED PHASE: This test should FAIL initially.
+        OpenCV is not mocked here: the real k-means, edge detection and
+        histogram comparison run against a real 480x640 image file.
 
         Validates:
-        - Visual coherence processing completes within 2s per image
+        - Visual coherence scoring completes within 2s per image
         - Memory usage stays reasonable during processing
-        - OpenCV operations are efficient
-        - Concurrent processing doesn't degrade performance
         """
         import time
         import psutil
         import gc
 
-        # Arrange
+        # Arrange - a real image file, returned by an injected generator
         prompt = "Performance test scene"
-        mock_image = np.random.randint(0, 255, (1920, 1080, 3), dtype=np.uint8)
+        image_path = image_factory(size=(480, 640), seed=7)
+
+        async def generator(_prompt: str) -> str:
+            return image_path
+
+        manager = VisualCoherenceManager(
+            consistency_threshold=0.0, image_generator=generator
+        )
 
         # Measure initial memory
         gc.collect()
         initial_memory = psutil.Process().memory_info().rss / 1024**2  # MB
 
-        with (
-            patch("cv2.imread", return_value=mock_image),
-            patch("cv2.kmeans") as mock_kmeans,
-        ):
+        # Measure processing time
+        start_time = time.time()
 
-            # Mock k-means results
-            mock_centers = np.random.rand(5, 3).astype(np.float32) * 255
-            mock_kmeans.return_value = (None, None, mock_centers)
+        # Act
+        result = await manager.generate_consistent_image(
+            prompt, sample_characters, sample_episode_context
+        )
 
-            with (
-                patch.object(coherence_manager, "_generate_with_ai") as mock_generate,
-                patch.object(coherence_manager, "_update_reference_data"),
-            ):
+        # Measure completion
+        processing_time = time.time() - start_time
 
-                mock_generate.return_value = "/fake/perf_test.png"
+        gc.collect()
+        final_memory = psutil.Process().memory_info().rss / 1024**2  # MB
+        memory_increase = final_memory - initial_memory
 
-                # Measure processing time
-                start_time = time.time()
-
-                # Act
-                result = await coherence_manager.generate_consistent_image(
-                    prompt, sample_characters, sample_episode_context
-                )
-
-                # Measure completion
-                end_time = time.time()
-                processing_time = end_time - start_time
-
-                gc.collect()
-                final_memory = psutil.Process().memory_info().rss / 1024**2  # MB
-                memory_increase = final_memory - initial_memory
-
-                # Assert performance constraints
-                assert processing_time < 2.0, (
-                    f"Visual coherence should complete within 2s, "
-                    f"took {processing_time:.3f}s"
-                )
-                assert memory_increase < 200, (
-                    f"Memory increase should be reasonable, "
-                    f"increased by {memory_increase:.1f}MB"
-                )
-                assert result is not None, "Should successfully generate image"
+        # Assert performance constraints
+        assert processing_time < 2.0, (
+            f"Visual coherence should complete within 2s, "
+            f"took {processing_time:.3f}s"
+        )
+        assert memory_increase < 200, (
+            f"Memory increase should be reasonable, "
+            f"increased by {memory_increase:.1f}MB"
+        )
+        assert result == image_path, "Should return the generated image path"
 
     @pytest.mark.asyncio
     async def test_error_handling_visual_coherence(self, coherence_manager):

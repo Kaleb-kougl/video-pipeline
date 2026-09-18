@@ -244,8 +244,10 @@ class WorkflowOrchestrator:
             logger.warning(f"Quality management failed, using defaults: {e}")
             quality_profile = None
         
-        # Phase 2 Step 3: Visual Coherence Generation
-        # Generate images with visual consistency
+        # Phase 2 Step 3: Visual Coherence Prompt Construction
+        # The visual coherence manager does not generate images (create_images below
+        # does that); here we only use its prompt-construction half to fold episode
+        # style and character consistency instructions into each scene prompt.
         enhanced_prompts = []
         episode_context = {
             'episode_id': f"{episode_data['show']}_S{episode_data['season']}E{episode_data['episode']}",
@@ -255,18 +257,18 @@ class WorkflowOrchestrator:
         
         for i, scene in enumerate(enhanced_episode['scenes']):
             try:
-                # Use enhanced prompt with visual coherence
-                consistent_image_path = await self.visual_coherence.generate_consistent_image(
+                # Build a coherence-enhanced prompt (style + character consistency)
+                coherent_prompt = await self.visual_coherence.build_coherent_prompt(
                     scene.get('enhanced_prompt', scene['prompt']),
                     scene.get('characters', []),
                     episode_context
                 )
-                enhanced_prompts.append(scene.get('enhanced_prompt', scene['prompt']))
-                logger.debug(f"Generated consistent image for scene {i}")
-                
+                enhanced_prompts.append(coherent_prompt)
+                logger.debug(f"Built coherence-enhanced prompt for scene {i}")
+
             except Exception as e:
-                logger.warning(f"Visual coherence failed for scene {i}, using fallback: {e}")
-                # Fallback to original prompt enhancement
+                logger.warning(f"Visual coherence prompt building failed for scene {i}, using fallback: {e}")
+                # Fallback to the video agent's generic style prompt enhancement
                 enhanced_prompts.append(self.video_agent.generate_optimized_images(
                     [scene['prompt']], episode_data
                 )[0])

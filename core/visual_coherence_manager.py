@@ -10,10 +10,15 @@ and intelligent retry mechanisms with OpenCV-based analysis.
 import cv2
 import numpy as np
 import asyncio
+import inspect
 import logging
-from typing import Dict, List, Tuple, Any
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 from pathlib import Path
+
+# An image generator takes a fully enhanced prompt and returns the path of the
+# image file it wrote to disk. It may be a coroutine function or a plain one.
+ImageGenerator = Callable[[str], Union[str, Awaitable[str]]]
 
 
 @dataclass
@@ -31,21 +36,36 @@ class VisualCoherenceManager:
     Maintain visual consistency and coherence across episode images.
 
     This class provides:
+    - Coherence-aware prompt construction (style + character + scene)
     - Visual consistency scoring using OpenCV and computer vision
     - Character appearance consistency tracking
     - Episode color palette coherence maintenance
     - Intelligent retry mechanism for low-consistency images
     - Reference data management for style and character templates
+
+    This class does NOT generate images. `generate_consistent_image` drives a
+    generate/score/retry loop around an image generator that the caller must
+    inject; without one it raises NotImplementedError rather than inventing a
+    path. Callers that only want the prompt-construction half (which needs no
+    generator at all) should use `build_coherent_prompt`.
     """
 
-    def __init__(self, consistency_threshold: float = 0.8):
+    def __init__(
+        self,
+        consistency_threshold: float = 0.8,
+        image_generator: Optional[ImageGenerator] = None,
+    ):
         """
         Initialize the Visual Coherence Manager.
 
         Args:
             consistency_threshold: Minimum consistency score to accept (0.0-1.0)
+            image_generator: Callable that takes an enhanced prompt, generates an
+                image, writes it to disk and returns its path. Required only for
+                `generate_consistent_image`; may be sync or async.
         """
         self.consistency_threshold = max(0.0, min(1.0, consistency_threshold))
+        self.image_generator = image_generator
         self.style_templates: Dict[str, Dict] = {}
         self.character_references: Dict[str, np.ndarray] = {}
         self.episode_color_palettes: Dict[str, List[List[int]]] = {}
@@ -73,17 +93,26 @@ class VisualCoherenceManager:
 
         Returns:
             Path to generated image that meets consistency threshold
+
+        Raises:
+            NotImplementedError: If no image generator has been injected.
         """
+        if self.image_generator is None:
+            raise NotImplementedError(
+                "VisualCoherenceManager cannot generate images on its own. "
+                "Inject an image generator (VisualCoherenceManager(image_generator=...) "
+                "or manager.image_generator = ...) that takes an enhanced prompt, "
+                "renders the image, writes it to disk and returns its path. "
+                "Use build_coherent_prompt() if you only need the enhanced prompt."
+            )
+
         self.logger.info(
             f"Generating consistent image for {len(characters)} characters"
         )
 
         # Build enhanced prompt with consistency requirements
-        style_prompt = self._build_style_prompt(episode_context)
-        character_prompt = await self._build_character_consistency_prompt(characters)
-
-        enhanced_prompt = self._create_enhanced_prompt(
-            style_prompt, character_prompt, prompt, episode_context
+        enhanced_prompt = await self.build_coherent_prompt(
+            prompt, characters, episode_context
         )
 
         # Attempt generation with retry mechanism
@@ -129,6 +158,32 @@ class VisualCoherenceManager:
             f"threshold: {self.consistency_threshold:.3f}) after {max_attempts} attempts"
         )
         return image_result
+
+    async def build_coherent_prompt(
+        self, prompt: str, characters: List[str], episode_context: Dict[str, Any]
+    ) -> str:
+        """
+        Build a coherence-enhanced image prompt from scene, characters and style.
+
+        This is the generator-independent half of the subsystem: it combines the
+        episode style, the known character references and the scene description
+        into a single prompt. Useful on its own for pipelines that hand prompts
+        to an external image generator.
+
+        Args:
+            prompt: Base scene description
+            characters: Characters present in the scene
+            episode_context: Episode context with style/theme information
+
+        Returns:
+            Enhanced prompt carrying style and character consistency instructions
+        """
+        style_prompt = self._build_style_prompt(episode_context)
+        character_prompt = await self._build_character_consistency_prompt(characters)
+
+        return self._create_enhanced_prompt(
+            style_prompt, character_prompt, prompt, episode_context
+        )
 
     async def _evaluate_visual_consistency(
         self, image_path: str, episode_context: Dict[str, Any], characters: List[str]
@@ -562,17 +617,37 @@ class VisualCoherenceManager:
 
     async def _generate_with_ai(self, enhanced_prompt: str) -> str:
         """
-        Generate image using AI with the enhanced prompt.
+        Generate an image by delegating to the injected image generator.
 
         Args:
             enhanced_prompt: Enhanced prompt for generation
 
         Returns:
-            Path to generated image file
+            Path to the generated image file, as reported by the generator
+
+        Raises:
+            NotImplementedError: If no image generator was injected.
+            ValueError: If the generator did not return a usable path.
         """
-        # This would integrate with the existing image generation system
-        # For now, return a mock path that tests can work with
-        return f"/generated/consistent_image_{hash(enhanced_prompt) % 10000}.png"
+        if self.image_generator is None:
+            raise NotImplementedError(
+                "No image generator injected into VisualCoherenceManager. "
+                "Real integration requires a callable that renders the prompt to "
+                "an image file on disk and returns its path, so that the OpenCV "
+                "consistency scoring below has something to read."
+            )
+
+        result = self.image_generator(enhanced_prompt)
+        if inspect.isawaitable(result):
+            result = await result
+
+        if not isinstance(result, str) or not result:
+            raise ValueError(
+                f"Image generator must return a path to a generated image file, "
+                f"got {result!r}"
+            )
+
+        return result
 
     async def _update_reference_data(
         self, image_path: str, characters: List[str], episode_context: Dict[str, Any]
@@ -584,23 +659,23 @@ class VisualCoherenceManager:
             image_path: Path to successfully generated image
             characters: Characters in the image
             episode_context: Episode context for data organization
+
+        Raises:
+            ValueError: If the image cannot be read. The reference data drives
+                every later consistency score, so a silent no-op here would leave
+                the feedback loop permanently inert.
         """
-        try:
-            # Load the successful image
-            image = cv2.imread(image_path)
-            if image is None:
-                self.logger.warning(
-                    f"Could not load image for reference update: {image_path}"
-                )
-                return
+        # Load the successful image
+        image = cv2.imread(image_path)
+        if image is None:
+            raise ValueError(
+                f"Could not load image for reference update: {image_path}"
+            )
 
-            # Update character references
-            for character in characters:
-                self.character_references[character] = image.copy()
-                self.logger.debug(f"Updated reference for character: {character}")
+        # Update character references
+        for character in characters:
+            self.character_references[character] = image.copy()
+            self.logger.debug(f"Updated reference for character: {character}")
 
-            # Note: Color palette and style template are updated during calculation
-            # to avoid redundant processing
-
-        except Exception as e:
-            self.logger.error(f"Error updating reference data: {e}")
+        # Note: Color palette and style template are updated during calculation
+        # to avoid redundant processing

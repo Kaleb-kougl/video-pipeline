@@ -124,6 +124,7 @@ class TestQualityEnhancementIntegration:
         quality_enhancement_pipeline,
         sample_episode_content,
         sample_character_analysis,
+        tmp_path,
     ):
         """
         Test visual coherence integration with character-enhanced prompts.
@@ -149,36 +150,92 @@ class TestQualityEnhancementIntegration:
 
         episode_context = {"episode_id": "integration_test", "visual_style": "anime"}
 
-        with (
-            patch.object(
-                pipeline["visual_coherence"], "_generate_with_ai"
-            ) as mock_generate,
-            patch.object(pipeline["visual_coherence"], "_update_reference_data"),
-            patch("cv2.imread") as mock_imread,
-        ):
+        # Inject an image generator through the public seam: it writes a real
+        # image file, so the consistency scoring and reference update below run
+        # for real rather than being patched away.
+        import cv2
+        import numpy as np
 
-            mock_generate.return_value = "/fake/integrated_image.png"
-            # Mock a valid image array for cv2.imread
-            import numpy as np
+        coherence = pipeline["visual_coherence"]
+        image_path = str(tmp_path / "integrated_image.png")
+        image = np.random.default_rng(3).integers(
+            0, 256, (480, 640, 3), dtype=np.uint8
+        )
+        assert cv2.imwrite(image_path, image), "Test image should be written"
 
-            mock_imread.return_value = np.random.randint(
-                0, 255, (480, 640, 3), dtype=np.uint8
+        prompts_seen = []
+
+        async def generator(prompt):
+            prompts_seen.append(prompt)
+            return image_path
+
+        coherence.image_generator = generator
+
+        # Generate image with enhanced prompt
+        result = await coherence.generate_consistent_image(
+            enhanced_prompt, characters, episode_context
+        )
+
+        assert result == image_path, "Should return the generator's image path"
+
+        # Verify enhanced prompt was used
+        called_prompt = prompts_seen[0]
+        assert len(called_prompt) > len(
+            enhanced_prompt
+        ), "Prompt should be further enhanced for consistency"
+        for character in characters:
+            assert character in called_prompt, "Should carry character context"
+
+        # Reference data was really updated from the generated image
+        for character in characters:
+            assert isinstance(
+                coherence.character_references[character], np.ndarray
+            ), "Accepted image should become the character reference"
+
+    @pytest.mark.asyncio
+    async def test_visual_coherence_refuses_to_fake_generation(
+        self, quality_enhancement_pipeline
+    ):
+        """
+        The pipeline's visual coherence manager has no image generator wired up,
+        so it must refuse rather than return a path to a file that never exists.
+        """
+        with pytest.raises(NotImplementedError, match="Inject an image generator"):
+            await quality_enhancement_pipeline[
+                "visual_coherence"
+            ].generate_consistent_image(
+                "A scene", ["Naruto"], {"episode_id": "integration_test"}
             )
 
-            # Generate image with enhanced prompt
-            result = await pipeline["visual_coherence"].generate_consistent_image(
-                enhanced_prompt, characters, episode_context
-            )
+    @pytest.mark.asyncio
+    async def test_coherent_prompt_building_needs_no_generator(
+        self,
+        quality_enhancement_pipeline,
+        sample_episode_content,
+        sample_character_analysis,
+    ):
+        """
+        Prompt construction - the half the workflow orchestrator actually uses -
+        works without any image generator.
+        """
+        pipeline = quality_enhancement_pipeline
 
-            assert (
-                result == "/fake/integrated_image.png"
-            ), "Should generate with enhanced prompt"
+        enhanced_episode = await pipeline[
+            "character_enhancer"
+        ].enhance_episode_with_character_data(
+            sample_episode_content, sample_character_analysis
+        )
+        first_scene = enhanced_episode["scenes"][0]
 
-            # Verify enhanced prompt was used
-            called_prompt = mock_generate.call_args[0][0]
-            assert len(called_prompt) > len(
-                enhanced_prompt
-            ), "Prompt should be further enhanced for consistency"
+        coherent_prompt = await pipeline["visual_coherence"].build_coherent_prompt(
+            first_scene["enhanced_prompt"],
+            first_scene["characters"],
+            {"episode_id": "integration_test", "visual_style": "anime"},
+        )
+
+        assert first_scene["enhanced_prompt"] in coherent_prompt
+        assert "anime" in coherent_prompt
+        assert len(coherent_prompt) > len(first_scene["enhanced_prompt"])
 
     @pytest.mark.asyncio
     async def test_quality_settings_affect_all_components(
