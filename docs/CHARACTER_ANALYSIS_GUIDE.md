@@ -303,9 +303,7 @@ print(f"Development Score: {development['development_score']:.2f}")
 ```python
 # Search for specific character traits
 moments = agent.search_character_moments(
-    "determined hero never give up",
-    character_name="Izuku",
-    limit=5
+    "determined hero never give up", character_name="Izuku", limit=5
 )
 
 # Find character relationships
@@ -376,11 +374,13 @@ Extend the personality detection by adding new trait keywords:
 
 ```python
 # In character_analysis_agent.py
-self.personality_keywords.update({
-    'mysterious': ['mysterious', 'enigmatic', 'secretive', 'hidden'],
-    'cheerful': ['cheerful', 'upbeat', 'optimistic', 'joyful'],
-    'sarcastic': ['sarcastic', 'witty', 'ironic', 'mocking']
-})
+self.personality_keywords.update(
+    {
+        "mysterious": ["mysterious", "enigmatic", "secretive", "hidden"],
+        "cheerful": ["cheerful", "upbeat", "optimistic", "joyful"],
+        "sarcastic": ["sarcastic", "witty", "ironic", "mocking"],
+    }
+)
 ```
 
 ### Custom Interaction Types
@@ -389,9 +389,9 @@ Add new interaction type detection:
 
 ```python
 # Custom interaction classification
-if any(word in context_text.lower() for word in ['teach', 'explain', 'lesson']):
+if any(word in context_text.lower() for word in ["teach", "explain", "lesson"]):
     interaction_type = "mentorship"
-elif any(word in context_text.lower() for word in ['romance', 'love', 'affection']):
+elif any(word in context_text.lower() for word in ["romance", "love", "affection"]):
     interaction_type = "romantic"
 ```
 
@@ -402,7 +402,8 @@ Use more sophisticated models for better analysis:
 ```python
 # Use larger, more capable models
 from sentence_transformers import SentenceTransformer
-encoder = SentenceTransformer('all-mpnet-base-v2')  # More accurate but slower
+
+encoder = SentenceTransformer("all-mpnet-base-v2")  # More accurate but slower
 ```
 
 ## 📈 Performance Considerations
@@ -451,7 +452,8 @@ chunks = self._chunk_transcript(transcript, chunk_size=500)  # Smaller chunks
 ```python
 # Pre-download models
 from sentence_transformers import SentenceTransformer
-model = SentenceTransformer('all-MiniLM-L6-v2')  # Downloads model
+
+model = SentenceTransformer("all-MiniLM-L6-v2")  # Downloads model
 ```
 
 ### Performance Issues
@@ -472,6 +474,7 @@ Enable debug logging for detailed analysis:
 
 ```python
 import logging
+
 logging.basicConfig(level=logging.DEBUG)
 ```
 

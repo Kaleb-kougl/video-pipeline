@@ -2,10 +2,11 @@
 Web scraping and HTML parsing utilities.
 """
 
+import logging
 import re
+
 import requests
 from bs4 import BeautifulSoup
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -53,15 +54,15 @@ def parse_html_with_beautifulsoup(html_content: str) -> tuple:
         return None, None, None
 
     # Parse HTML content using BeautifulSoup for element extraction
-    soup = BeautifulSoup(html_content, 'html.parser')
+    soup = BeautifulSoup(html_content, "html.parser")
 
     # Extract the page title from the h1 element
-    title = soup.find('h1')
+    title = soup.find("h1")
     if title:
         title = title.get_text()
-    
+
     # Use regex to extract season and episode information from title
-    match = re.search(r'Season \d+, Episode \d+', title) if title else None
+    match = re.search(r"Season \d+, Episode \d+", title) if title else None
     episode = match.group(0) if match else "Unknown Episode"
 
     # Find the transcript content using the specific class name

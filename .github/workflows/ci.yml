@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUFF_VERSION: "0.16.8"
+  MYPY_VERSION: "2.3.1"
+
+jobs:
+  # Lint and type checks need no project dependencies, so they run once on a
+  # single interpreter and finish in seconds.
+  lint:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Lint (ruff)
+        run: uvx ruff@${{ env.RUFF_VERSION }} check .
+
+      - name: Format check (ruff)
+        run: uvx ruff@${{ env.RUFF_VERSION }} format --check .
+
+      # Scoped on purpose: strict typing is only enforced for core.* today.
+      # See the [tool.mypy] overrides in pyproject.toml.
+      - name: Type check (mypy, core only)
+        run: uvx mypy@${{ env.MYPY_VERSION }} --no-incremental core
+
+  test:
+    name: Tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "requirements.txt"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Create virtualenv
+        run: uv venv --python ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv pip install -r requirements.txt
+
+      # Network-touching suites are excluded by pyproject's addopts
+      # (`-m 'not network'` plus the --ignore list), so a bare `pytest` here
+      # runs exactly what runs locally.
+      - name: Run tests
+        env:
+          # Nothing should reach the network or a model hub during the suite;
+          # fail loudly instead of hanging if something tries.
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: .venv/bin/python -m pytest

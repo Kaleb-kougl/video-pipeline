@@ -7,18 +7,18 @@ style validation, character appearance consistency, color palette coherence,
 and intelligent retry mechanisms with OpenCV-based analysis.
 """
 
-import cv2
-import numpy as np
-import asyncio
 import inspect
 import logging
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from pathlib import Path
+from typing import Any
+
+import cv2
+import numpy as np
 
 # An image generator takes a fully enhanced prompt and returns the path of the
 # image file it wrote to disk. It may be a coroutine function or a plain one.
-ImageGenerator = Callable[[str], Union[str, Awaitable[str]]]
+ImageGenerator = Callable[[str], str | Awaitable[str]]
 
 
 @dataclass
@@ -53,7 +53,7 @@ class VisualCoherenceManager:
     def __init__(
         self,
         consistency_threshold: float = 0.8,
-        image_generator: Optional[ImageGenerator] = None,
+        image_generator: ImageGenerator | None = None,
     ):
         """
         Initialize the Visual Coherence Manager.
@@ -66,9 +66,9 @@ class VisualCoherenceManager:
         """
         self.consistency_threshold = max(0.0, min(1.0, consistency_threshold))
         self.image_generator = image_generator
-        self.style_templates: Dict[str, Dict] = {}
-        self.character_references: Dict[str, np.ndarray] = {}
-        self.episode_color_palettes: Dict[str, List[List[int]]] = {}
+        self.style_templates: dict[str, dict] = {}
+        self.character_references: dict[str, np.ndarray] = {}
+        self.episode_color_palettes: dict[str, list[list[int]]] = {}
         self.logger = logging.getLogger(__name__)
 
         self.logger.info(
@@ -78,8 +78,8 @@ class VisualCoherenceManager:
     async def generate_consistent_image(
         self,
         prompt: str,
-        characters: List[str],
-        episode_context: Dict[str, Any],
+        characters: list[str],
+        episode_context: dict[str, Any],
         max_attempts: int = 3,
     ) -> str:
         """
@@ -106,14 +106,10 @@ class VisualCoherenceManager:
                 "Use build_coherent_prompt() if you only need the enhanced prompt."
             )
 
-        self.logger.info(
-            f"Generating consistent image for {len(characters)} characters"
-        )
+        self.logger.info(f"Generating consistent image for {len(characters)} characters")
 
         # Build enhanced prompt with consistency requirements
-        enhanced_prompt = await self.build_coherent_prompt(
-            prompt, characters, episode_context
-        )
+        enhanced_prompt = await self.build_coherent_prompt(prompt, characters, episode_context)
 
         # Attempt generation with retry mechanism
         for attempt in range(max_attempts):
@@ -135,9 +131,7 @@ class VisualCoherenceManager:
             # Check if consistency meets threshold
             if consistency_metrics.overall_score >= self.consistency_threshold:
                 # Update reference data for future consistency checks
-                await self._update_reference_data(
-                    image_result, characters, episode_context
-                )
+                await self._update_reference_data(image_result, characters, episode_context)
                 self.logger.info(f"Generated consistent image on attempt {attempt + 1}")
                 return image_result
 
@@ -160,7 +154,7 @@ class VisualCoherenceManager:
         return image_result
 
     async def build_coherent_prompt(
-        self, prompt: str, characters: List[str], episode_context: Dict[str, Any]
+        self, prompt: str, characters: list[str], episode_context: dict[str, Any]
     ) -> str:
         """
         Build a coherence-enhanced image prompt from scene, characters and style.
@@ -181,12 +175,10 @@ class VisualCoherenceManager:
         style_prompt = self._build_style_prompt(episode_context)
         character_prompt = await self._build_character_consistency_prompt(characters)
 
-        return self._create_enhanced_prompt(
-            style_prompt, character_prompt, prompt, episode_context
-        )
+        return self._create_enhanced_prompt(style_prompt, character_prompt, prompt, episode_context)
 
     async def _evaluate_visual_consistency(
-        self, image_path: str, episode_context: Dict[str, Any], characters: List[str]
+        self, image_path: str, episode_context: dict[str, Any], characters: list[str]
     ) -> VisualConsistencyMetrics:
         """
         Evaluate visual consistency using OpenCV and computer vision.
@@ -212,18 +204,12 @@ class VisualCoherenceManager:
             current_image, episode_context.get("episode_id")
         )
 
-        style_score = await self._calculate_style_consistency(
-            current_image, episode_context
-        )
+        style_score = await self._calculate_style_consistency(current_image, episode_context)
 
-        character_score = await self._calculate_character_similarity(
-            current_image, characters
-        )
+        character_score = await self._calculate_character_similarity(current_image, characters)
 
         # Calculate weighted overall score (style weighted highest)
-        overall_score = (
-            (color_score * 0.3) + (style_score * 0.4) + (character_score * 0.3)
-        )
+        overall_score = (color_score * 0.3) + (style_score * 0.4) + (character_score * 0.3)
 
         return VisualConsistencyMetrics(
             color_coherence_score=color_score,
@@ -232,9 +218,7 @@ class VisualCoherenceManager:
             overall_score=overall_score,
         )
 
-    async def _calculate_color_coherence(
-        self, image: np.ndarray, episode_id: str
-    ) -> float:
+    async def _calculate_color_coherence(self, image: np.ndarray, episode_id: str) -> float:
         """
         Calculate color palette coherence using OpenCV k-means clustering.
 
@@ -251,21 +235,15 @@ class VisualCoherenceManager:
             criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
 
             # Perform k-means clustering to find 5 dominant colors
-            _, _, centers = cv2.kmeans(
-                pixels, 5, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS
-            )
+            _, _, centers = cv2.kmeans(pixels, 5, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
 
             dominant_colors = centers.astype(int).tolist()
 
             # Compare with existing episode color palette
             if episode_id in self.episode_color_palettes:
                 episode_palette = self.episode_color_palettes[episode_id]
-                coherence_score = self._compare_color_palettes(
-                    dominant_colors, episode_palette
-                )
-                self.logger.debug(
-                    f"Color coherence for {episode_id}: {coherence_score:.3f}"
-                )
+                coherence_score = self._compare_color_palettes(dominant_colors, episode_palette)
+                self.logger.debug(f"Color coherence for {episode_id}: {coherence_score:.3f}")
                 return coherence_score
             else:
                 # First image - establish color palette for episode
@@ -278,7 +256,7 @@ class VisualCoherenceManager:
             return 0.5  # Fallback score
 
     async def _calculate_style_consistency(
-        self, image: np.ndarray, episode_context: Dict[str, Any]
+        self, image: np.ndarray, episode_context: dict[str, Any]
     ) -> float:
         """
         Calculate style consistency using feature comparison.
@@ -313,12 +291,8 @@ class VisualCoherenceManager:
             # Compare with stored style template
             if episode_id in self.style_templates:
                 stored_features = self.style_templates[episode_id]
-                similarity = self._compare_style_features(
-                    current_style_features, stored_features
-                )
-                self.logger.debug(
-                    f"Style consistency for {episode_id}: {similarity:.3f}"
-                )
+                similarity = self._compare_style_features(current_style_features, stored_features)
+                self.logger.debug(f"Style consistency for {episode_id}: {similarity:.3f}")
                 return similarity
             else:
                 # First image - establish style template
@@ -331,7 +305,7 @@ class VisualCoherenceManager:
             return 0.5  # Fallback score
 
     async def _calculate_character_similarity(
-        self, image: np.ndarray, characters: List[str]
+        self, image: np.ndarray, characters: list[str]
     ) -> float:
         """
         Calculate character appearance similarity with reference images.
@@ -355,9 +329,7 @@ class VisualCoherenceManager:
                     ref_image = self.character_references[character]
                     similarity = self._compare_character_features(image, ref_image)
                     similarities.append(similarity)
-                    self.logger.debug(
-                        f"Character similarity for {character}: {similarity:.3f}"
-                    )
+                    self.logger.debug(f"Character similarity for {character}: {similarity:.3f}")
                 else:
                     # No reference - store current image as reference
                     self.character_references[character] = image.copy()
@@ -373,7 +345,7 @@ class VisualCoherenceManager:
             return 0.5  # Fallback score
 
     def _compare_color_palettes(
-        self, palette_1: List[List[int]], palette_2: List[List[int]]
+        self, palette_1: list[list[int]], palette_2: list[list[int]]
     ) -> float:
         """
         Compare two color palettes for similarity.
@@ -422,7 +394,7 @@ class VisualCoherenceManager:
             return 0.0
 
     def _compare_style_features(
-        self, features_1: Dict[str, float], features_2: Dict[str, float]
+        self, features_1: dict[str, float], features_2: dict[str, float]
     ) -> float:
         """
         Compare style features for consistency.
@@ -465,9 +437,7 @@ class VisualCoherenceManager:
             self.logger.error(f"Error comparing style features: {e}")
             return 0.0
 
-    def _compare_character_features(
-        self, image1: np.ndarray, image2: np.ndarray
-    ) -> float:
+    def _compare_character_features(self, image1: np.ndarray, image2: np.ndarray) -> float:
         """
         Compare character features between two images.
 
@@ -506,7 +476,7 @@ class VisualCoherenceManager:
             self.logger.error(f"Error comparing character features: {e}")
             return 0.0
 
-    def _build_style_prompt(self, episode_context: Dict[str, Any]) -> str:
+    def _build_style_prompt(self, episode_context: dict[str, Any]) -> str:
         """
         Build style consistency prompt from episode context.
 
@@ -525,7 +495,7 @@ class VisualCoherenceManager:
 
         return style_prompt
 
-    async def _build_character_consistency_prompt(self, characters: List[str]) -> str:
+    async def _build_character_consistency_prompt(self, characters: list[str]) -> str:
         """
         Build character consistency prompt based on reference data.
 
@@ -552,7 +522,7 @@ class VisualCoherenceManager:
         style_prompt: str,
         character_prompt: str,
         scene_prompt: str,
-        episode_context: Dict[str, Any],
+        episode_context: dict[str, Any],
     ) -> str:
         """
         Create comprehensive enhanced prompt for generation.
@@ -602,9 +572,7 @@ class VisualCoherenceManager:
             enhancements.append("preserve consistent art style and visual approach")
 
         if consistency_metrics.character_similarity_score < 0.6:
-            enhancements.append(
-                "ensure character appearance consistency and recognition"
-            )
+            enhancements.append("ensure character appearance consistency and recognition")
 
         # Combine original prompt with enhancements
         if enhancements:
@@ -643,14 +611,13 @@ class VisualCoherenceManager:
 
         if not isinstance(result, str) or not result:
             raise ValueError(
-                f"Image generator must return a path to a generated image file, "
-                f"got {result!r}"
+                f"Image generator must return a path to a generated image file, got {result!r}"
             )
 
         return result
 
     async def _update_reference_data(
-        self, image_path: str, characters: List[str], episode_context: Dict[str, Any]
+        self, image_path: str, characters: list[str], episode_context: dict[str, Any]
     ) -> None:
         """
         Update reference data with successful generation.
@@ -668,9 +635,7 @@ class VisualCoherenceManager:
         # Load the successful image
         image = cv2.imread(image_path)
         if image is None:
-            raise ValueError(
-                f"Could not load image for reference update: {image_path}"
-            )
+            raise ValueError(f"Could not load image for reference update: {image_path}")
 
         # Update character references
         for character in characters:

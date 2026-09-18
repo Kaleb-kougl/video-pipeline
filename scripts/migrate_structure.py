@@ -15,75 +15,75 @@ sys.path.insert(0, str(project_root))
 
 def test_new_structure():
     """Test the new modular structure.
-    
+
     This function validates that all components of the new modular architecture
     are working correctly by testing configuration, database, agents, and schemas.
-    
+
     Returns:
         None
-        
+
     Raises:
         Exception: If any component test fails critically.
     """
     print("🧪 Testing New Modular Structure")
     print("=" * 50)
-    
+
     # Test configuration system
     print("\n📋 Testing Configuration System...")
     try:
-        from config.settings import get_settings, EpisodeConfigs
-        
+        from config.settings import EpisodeConfigs, get_settings
+
         settings = get_settings()
-        print(f"✅ Settings loaded:")
+        print("✅ Settings loaded:")
         print(f"   Database path: {settings.database_path}")
         print(f"   Output directory: {settings.output_directory}")
         print(f"   Model name: {settings.model_name}")
-        
+
         # Test episode configs
         mha_config = EpisodeConfigs.get_show_config("My Hero Academia")
-        print(f"✅ Episode configs loaded:")
+        print("✅ Episode configs loaded:")
         print(f"   MHA seasons: {list(mha_config['seasons'].keys())}")
-        
+
     except Exception as e:
         print(f"❌ Configuration error: {e}")
-    
+
     # Test database module
     print("\n🗄️ Testing Database Module...")
     try:
         from core.database import DatabaseManager
-        
+
         db = DatabaseManager(":memory:")  # Use in-memory database for testing
-        print(f"✅ Database initialized")
-        
+        print("✅ Database initialized")
+
         # Test saving an episode
         db.save_episode("Test Show", "1", "1", "http://example.com", "Test transcript")
         episode = db.get_episode("Test Show", "1", "1")
         print(f"✅ Episode save/retrieve works: {episode['show'] if episode else 'None'}")
-        
+
     except Exception as e:
         print(f"❌ Database error: {e}")
-    
+
     # Test transcript agent
     print("\n🔍 Testing Transcript Agent...")
     try:
         from agents.transcript_agent import TranscriptDiscoveryAgent
-        
+
         agent = TranscriptDiscoveryAgent()
-        print(f"✅ Transcript agent initialized")
+        print("✅ Transcript agent initialized")
         print(f"   Available sources: {list(agent.sources.keys())}")
-        
+
         # Test URL slug generation
         slugs = agent.get_show_slugs("My Hero Academia")
         print(f"✅ URL slug generation works: {len(slugs)} variations")
-        
+
     except Exception as e:
         print(f"❌ Transcript agent error: {e}")
-    
+
     # Test schemas
     print("\n📝 Testing Schemas...")
     try:
-        from core.schemas import TranscriptResult, ProcessingResult
-        
+        from core.schemas import ProcessingResult, TranscriptResult
+
         # Test creating a transcript result
         result = TranscriptResult(
             transcript="Test transcript",
@@ -92,51 +92,51 @@ def test_new_structure():
             source="test_source",
             episode_info={"season": "1", "episode": "1"},
             content_length=100,
-            quality_score=0.8
+            quality_score=0.8,
         )
         print(f"✅ TranscriptResult schema works: {result.source}")
-        
+
         # Test processing result
         proc_result = ProcessingResult(success=True, job_id="test_123")
         print(f"✅ ProcessingResult schema works: {proc_result.success}")
-        
+
     except Exception as e:
         print(f"❌ Schema error: {e}")
 
 
 def demonstrate_usage():
     """Demonstrate how to use the new structure.
-    
+
     This function provides examples and documentation on how to use
     the new modular architecture components together.
-    
+
     Returns:
         None
     """
     print("\n🚀 Usage Demonstration")
     print("=" * 50)
-    
+
     print("\n1. Import the new modules:")
     print("""
     from config.settings import get_settings
     from core.database import DatabaseManager
     from agents.transcript_agent import TranscriptDiscoveryAgent
     """)
-    
+
     print("\n2. Initialize components:")
     print("""
     settings = get_settings()
     db = DatabaseManager(settings.database_path)
     transcript_agent = TranscriptDiscoveryAgent()
     """)
-    
+
     print("\n3. Find a transcript:")
     print("""
     result = transcript_agent.find_episode_transcript(
         "My Hero Academia", 1, 1
     )
     """)
-    
+
     print("\n4. Save to database:")
     print("""
     if result:
@@ -152,16 +152,16 @@ def demonstrate_usage():
 
 def migration_checklist():
     """Display migration checklist.
-    
+
     Shows the current status of migration from monolithic to modular structure,
     including completed items and remaining work.
-    
+
     Returns:
         None
     """
     print("\n📋 Migration Checklist")
     print("=" * 50)
-    
+
     checklist = [
         "✅ Core modules extracted (database, schemas)",
         "✅ Agent modules created (transcript_agent)",
@@ -172,12 +172,12 @@ def migration_checklist():
         "🔄 Workflow orchestrator refactoring",
         "🔄 Utility modules (web scraping, file operations)",
         "🔄 Comprehensive testing",
-        "🔄 Documentation updates"
+        "🔄 Documentation updates",
     ]
-    
+
     for item in checklist:
         print(f"  {item}")
-    
+
     print("\n📝 Next Steps:")
     print("1. Continue extracting remaining components")
     print("2. Update imports in existing code")
@@ -188,16 +188,16 @@ def migration_checklist():
 
 def show_project_structure():
     """Show the new project structure.
-    
+
     Displays the recommended modular project structure with status
     indicators for each component.
-    
+
     Returns:
         None
     """
     print("\n📁 New Project Structure")
     print("=" * 50)
-    
+
     structure = """
 htmlParser/
 ├── main.py                     # Modular CLI entry point
@@ -226,7 +226,7 @@ htmlParser/
     ├── __init__.py            🔄
     └── test_*.py              🔄
     """
-    
+
     print(structure)
     print("\n✅ = Completed")
     print("🔄 = To be implemented")
@@ -235,12 +235,12 @@ htmlParser/
 if __name__ == "__main__":
     print("🔄 Anime Video Generator - Migration to Modular Structure")
     print("=" * 70)
-    
+
     test_new_structure()
     demonstrate_usage()
     migration_checklist()
     show_project_structure()
-    
+
     print("\n🎉 Migration framework is ready!")
     print("   You can now start using the new modular components.")
     print("   Run 'python main.py --help' to see available commands.")

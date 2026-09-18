@@ -5,39 +5,40 @@ Handles vertical format (9:16) videos with 90-second maximum duration.
 """
 
 import logging
-from typing import Dict, List, Any
+from typing import Any
 
 from .base_exporter import BaseExporter
 
 logger = logging.getLogger(__name__)
 
+
 class InstagramReelsExporter(BaseExporter):
     """
     Exporter for Instagram Reels format videos.
-    
+
     Handles vertical format (9:16) videos optimized for Instagram's aesthetic-focused
     platform with 90-second maximum duration and visual consistency emphasis.
     """
-    
+
     def __init__(self):
         """
         Initialize Instagram Reels exporter.
-        
+
         Sets up Instagram Reels-specific configuration for vertical video format
         with aesthetic optimization and brand consistency features.
         """
         super().__init__()
-        
-    def get_format_constraints(self) -> Dict[str, Any]:
+
+    def get_format_constraints(self) -> dict[str, Any]:
         """Get Instagram Reels format constraints."""
         return {
-            'max_duration': 90,  # 90 seconds maximum
-            'aspect_ratio': '9:16',  # Vertical format
-            'min_resolution': (1080, 1920),  # Minimum HD vertical
-            'max_file_size': 50 * 1024 * 1024,  # 50MB max
+            "max_duration": 90,  # 90 seconds maximum
+            "aspect_ratio": "9:16",  # Vertical format
+            "min_resolution": (1080, 1920),  # Minimum HD vertical
+            "max_file_size": 50 * 1024 * 1024,  # 50MB max
         }
-        
-    def export_video(self, video_content: Dict[str, Any]) -> Dict[str, Any]:
+
+    def export_video(self, video_content: dict[str, Any]) -> dict[str, Any]:
         """
         Export video in Instagram Reels format.
 
@@ -49,10 +50,10 @@ class InstagramReelsExporter(BaseExporter):
 
         adapted_content = self.adapt_content_for_format(video_content)
 
-        show_name = video_content.get('show_name', 'Unknown')
-        season = video_content.get('season', 1)
+        show_name = video_content.get("show_name", "Unknown")
+        season = video_content.get("season", 1)
 
-        safe_show = show_name.replace(' ', '_').replace('/', '_')
+        safe_show = show_name.replace(" ", "_").replace("/", "_")
         output_filename = f"{safe_show}_S{season}_instagram_reels.mp4"
 
         raise NotImplementedError(
@@ -65,46 +66,42 @@ class InstagramReelsExporter(BaseExporter):
             f"{constraints['max_file_size'] // (1024 * 1024)}MB limit. "
             f"Content adaptation succeeded; only the render step is missing."
         )
-            
-    def adapt_content_for_format(self, video_content: Dict[str, Any]) -> Dict[str, Any]:
+
+    def adapt_content_for_format(self, video_content: dict[str, Any]) -> dict[str, Any]:
         """Adapt content for Instagram Reels requirements."""
-        original_duration = video_content.get('total_duration', 300)
-        max_duration = self.get_format_constraints()['max_duration']
-        
+        original_duration = video_content.get("total_duration", 300)
+        max_duration = self.get_format_constraints()["max_duration"]
+
         adapted_duration = self._calculate_adapted_duration(original_duration, max_duration)
-        
-        visual_concepts = video_content.get('visual_concepts', [])
+
+        visual_concepts = video_content.get("visual_concepts", [])
         max_concepts = 4  # Keep it concise
         condensed_concepts = visual_concepts[:max_concepts]
-        
+
         enhanced_concepts = self._enhance_hook(condensed_concepts)
-        
+
         adapted = {
-            'show_name': video_content.get('show_name'),
-            'season': video_content.get('season'),
-            'visual_concepts': enhanced_concepts,
-            'audio_file': video_content.get('audio_file'),
-            'estimated_duration': adapted_duration,
-            'hook_enhanced': True,
-            'format_optimized': 'instagram_reels'
+            "show_name": video_content.get("show_name"),
+            "season": video_content.get("season"),
+            "visual_concepts": enhanced_concepts,
+            "audio_file": video_content.get("audio_file"),
+            "estimated_duration": adapted_duration,
+            "hook_enhanced": True,
+            "format_optimized": "instagram_reels",
         }
-        
+
         return adapted
-        
-    def get_platform_optimization_rules(self) -> Dict[str, Any]:
+
+    def get_platform_optimization_rules(self) -> dict[str, Any]:
         """Get Instagram Reels platform optimization rules."""
         return {
-            'content_style': 'aesthetic_focused',
-            'pacing_preferences': 'medium_fast',
-            'hook_strategies': [
-                'visual_aesthetics',
-                'story_arcs',
-                'music_sync',
-                'brand_consistency'
+            "content_style": "aesthetic_focused",
+            "pacing_preferences": "medium_fast",
+            "hook_strategies": [
+                "visual_aesthetics",
+                "story_arcs",
+                "music_sync",
+                "brand_consistency",
             ],
-            'engagement_tactics': [
-                'story_features',
-                'hashtag_optimization',
-                'cross_posting'
-            ]
+            "engagement_tactics": ["story_features", "hashtag_optimization", "cross_posting"],
         }

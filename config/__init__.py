@@ -22,27 +22,20 @@ Functions (from settings module):
 
 Example Usage:
     from config import get_settings, VideoConfig
-    
+
     settings = get_settings()
     video_config = settings.video_config
     print(f"Default duration: {video_config.default_duration_minutes} minutes")
 """
 
 # Configuration management imports
-from .settings import (
-    Settings,
-    VideoConfig, 
-    EpisodeConfigs,
-    get_settings,
-    update_settings,
-    settings
-)
+from .settings import EpisodeConfigs, Settings, VideoConfig, get_settings, settings, update_settings
 
 __all__ = [
-    'Settings',
-    'VideoConfig',
-    'EpisodeConfigs', 
-    'get_settings',
-    'update_settings',
-    'settings'
+    "Settings",
+    "VideoConfig",
+    "EpisodeConfigs",
+    "get_settings",
+    "update_settings",
+    "settings",
 ]

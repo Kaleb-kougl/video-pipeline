@@ -29,12 +29,12 @@ from core.content_cache import ContentCache, CacheConfig
 
 # Initialize with custom configuration
 config = CacheConfig(
-    max_content_entries=1000,    # Text/character analysis cache size
-    max_image_entries=500,       # Image cache size
-    similarity_threshold=0.85,   # Content similarity threshold
-    ttl_hours=24,               # Time-to-live for cache entries
-    enable_lru_eviction=True,   # LRU eviction when cache is full
-    persist_to_disk=True        # Save cache across sessions
+    max_content_entries=1000,  # Text/character analysis cache size
+    max_image_entries=500,  # Image cache size
+    similarity_threshold=0.85,  # Content similarity threshold
+    ttl_hours=24,  # Time-to-live for cache entries
+    enable_lru_eviction=True,  # LRU eviction when cache is full
+    persist_to_disk=True,  # Save cache across sessions
 )
 
 cache = ContentCache(config=config)
@@ -49,14 +49,13 @@ calculator = SimilarityCalculator()
 # Text similarity with anime-specific term boosting
 similarity = calculator.calculate_text_similarity(
     "Naruto trains with shadow clones in the forest",
-    "Naruto practices with shadow clones in the woods"
+    "Naruto practices with shadow clones in the woods",
 )
 # Returns: ~0.87 (high similarity due to common anime terms)
 
 # Image prompt similarity with visual keyword analysis
 prompt_similarity = calculator.calculate_prompt_similarity(
-    "anime style forest scene with ninja training",
-    "anime style woodland scene with ninja practice"
+    "anime style forest scene with ninja training", "anime style woodland scene with ninja practice"
 )
 # Returns: ~0.75 (good similarity for visual content)
 ```
@@ -76,11 +75,11 @@ Comprehensive performance tracking:
 stats = cache.get_cache_info()
 print(f"""
 Cache Performance:
-- Hit Rate: {stats['stats']['hit_rate']:.1%}
-- Total Hits: {stats['stats']['cache_hits']}
-- Total Misses: {stats['stats']['cache_misses']}
-- Content Entries: {stats['content_cache']['entries']}/{stats['content_cache']['max_entries']}
-- Image Entries: {stats['image_cache']['entries']}/{stats['image_cache']['max_entries']}
+- Hit Rate: {stats["stats"]["hit_rate"]:.1%}
+- Total Hits: {stats["stats"]["cache_hits"]}
+- Total Misses: {stats["stats"]["cache_misses"]}
+- Content Entries: {stats["content_cache"]["entries"]}/{stats["content_cache"]["max_entries"]}
+- Image Entries: {stats["image_cache"]["entries"]}/{stats["image_cache"]["max_entries"]}
 """)
 ```
 
@@ -92,10 +91,10 @@ The system uses advanced algorithms to detect similar content and avoid regenera
 
 ```python
 # Anime-specific term boosting
-anime_terms = {'naruto', 'shadow', 'clones', 'training', 'forest', 'woods', 'practice'}
+anime_terms = {"naruto", "shadow", "clones", "training", "forest", "woods", "practice"}
 
 # Visual keyword analysis for image prompts
-visual_keywords = {'anime', 'style', 'forest', 'village', 'training', 'battle', 'character'}
+visual_keywords = {"anime", "style", "forest", "village", "training", "battle", "character"}
 
 # Weighted similarity calculation
 # Text similarity (70%) + Keyword overlap (30%) for images
@@ -156,17 +155,11 @@ Leverage common content across different episodes:
 
 ```python
 # Episode 1: Cache forest training scene
-cache.cache_content(
-    hash1, 
-    "anime forest training scene", 
-    ContentType.IMAGE
-)
+cache.cache_content(hash1, "anime forest training scene", ContentType.IMAGE)
 
 # Episode 5: Find similar content
 similar = cache.find_similar_content(
-    "anime woodland training scene",
-    ContentType.IMAGE,
-    episode_context="S1E5"
+    "anime woodland training scene", ContentType.IMAGE, episode_context="S1E5"
 )
 # ↑ Returns cached forest scene (similarity: 0.87)
 ```
@@ -183,11 +176,11 @@ Comprehensive monitoring of cache performance:
 
 ```python
 class CacheStats:
-    cache_hits: int          # Successful cache retrievals
-    cache_misses: int        # Failed cache lookups
-    total_entries: int       # Current total cached items
-    memory_usage_mb: float   # Estimated memory usage
-    
+    cache_hits: int  # Successful cache retrievals
+    cache_misses: int  # Failed cache lookups
+    total_entries: int  # Current total cached items
+    memory_usage_mb: float  # Estimated memory usage
+
     @property
     def hit_rate(self) -> float:
         """Calculate cache hit rate (0.0-1.0)"""
@@ -213,9 +206,7 @@ yet, so this integration is currently a contract only.
 # In your generator's __init__()
 if enable_caching:
     self.content_cache = create_content_cache(
-        max_image_entries=200,
-        similarity_threshold=0.85,
-        enable_persistence=True
+        max_image_entries=200, similarity_threshold=0.85, enable_persistence=True
     )
 
 # When generating
@@ -241,13 +232,10 @@ character_data = {
     "name": "Naruto",
     "importance": 0.9,
     "screen_time": 0.8,
-    "development_arc": "hero's journey"
+    "development_arc": "hero's journey",
 }
 
-character_hash = cache._generate_content_hash(
-    character_data, 
-    ContentType.CHARACTER_ANALYSIS
-)
+character_hash = cache._generate_content_hash(character_data, ContentType.CHARACTER_ANALYSIS)
 cache.cache_content(character_hash, character_data, ContentType.CHARACTER_ANALYSIS)
 
 # Reuse in different episodes
@@ -283,10 +271,10 @@ cache = create_content_cache()
 
 # Custom configuration
 cache = create_content_cache(
-    max_content_entries=2000,      # Increase text cache size
-    max_image_entries=1000,        # Increase image cache size  
-    similarity_threshold=0.90,     # Stricter similarity matching
-    enable_persistence=True        # Enable disk persistence
+    max_content_entries=2000,  # Increase text cache size
+    max_image_entries=1000,  # Increase image cache size
+    similarity_threshold=0.90,  # Stricter similarity matching
+    enable_persistence=True,  # Enable disk persistence
 )
 ```
 
@@ -294,14 +282,14 @@ cache = create_content_cache(
 
 ```python
 config = CacheConfig(
-    max_content_entries=1000,           # Text/character cache limit
-    max_image_entries=500,              # Image cache limit
-    similarity_threshold=0.85,          # Similarity detection threshold
-    ttl_hours=24,                      # Cache entry lifetime
-    enable_lru_eviction=True,          # LRU eviction when full
-    persist_to_disk=True,              # Disk persistence
+    max_content_entries=1000,  # Text/character cache limit
+    max_image_entries=500,  # Image cache limit
+    similarity_threshold=0.85,  # Similarity detection threshold
+    ttl_hours=24,  # Cache entry lifetime
+    enable_lru_eviction=True,  # LRU eviction when full
+    persist_to_disk=True,  # Disk persistence
     cache_file_path="data/cache/content_cache.json",  # Cache file location
-    enable_similarity_search=True      # Enable similarity detection
+    enable_similarity_search=True,  # Enable similarity detection
 )
 
 cache = ContentCache(config=config)
@@ -314,17 +302,17 @@ cache = ContentCache(config=config)
 dev_config = CacheConfig(
     max_content_entries=100,
     max_image_entries=50,
-    ttl_hours=1,                # Short TTL for testing
-    persist_to_disk=False       # No persistence needed
+    ttl_hours=1,  # Short TTL for testing
+    persist_to_disk=False,  # No persistence needed
 )
 
 # Production environment (maximum performance)
 prod_config = CacheConfig(
     max_content_entries=5000,
     max_image_entries=2000,
-    ttl_hours=72,               # Longer TTL for stability
-    persist_to_disk=True,       # Persist across restarts
-    similarity_threshold=0.90   # Stricter matching
+    ttl_hours=72,  # Longer TTL for stability
+    persist_to_disk=True,  # Persist across restarts
+    similarity_threshold=0.90,  # Stricter matching
 )
 ```
 
@@ -353,13 +341,13 @@ prod_config = CacheConfig(
 **Tuning Guidelines:**
 ```python
 # Conservative (higher quality, fewer cache hits)
-similarity_threshold=0.90
+similarity_threshold = 0.90
 
 # Balanced (recommended for most use cases)
-similarity_threshold=0.85
+similarity_threshold = 0.85
 
 # Aggressive (more cache hits, potential quality trade-offs)
-similarity_threshold=0.80
+similarity_threshold = 0.80
 ```
 
 ### 3. Memory Management
@@ -373,15 +361,15 @@ similarity_threshold=0.80
 ```python
 # Calculate approximate memory usage
 estimated_mb = (
-    (max_content_entries * 0.01) +  # Text content (10KB avg)
-    (max_image_entries * 0.005)     # Image metadata (5KB avg)
+    (max_content_entries * 0.01)  # Text content (10KB avg)
+    + (max_image_entries * 0.005)  # Image metadata (5KB avg)
 )
 
 # Recommended limits for different memory constraints
 memory_limits = {
     "2GB RAM": {"content": 500, "image": 200},
     "4GB RAM": {"content": 1000, "image": 500},
-    "8GB+ RAM": {"content": 2000, "image": 1000}
+    "8GB+ RAM": {"content": 2000, "image": 1000},
 }
 ```
 
@@ -478,11 +466,13 @@ print(f"Content cache usage: {info['content_cache']['usage_percentage']:.1f}%")
 ```python
 # Verify cache directory exists
 from pathlib import Path
+
 cache_dir = Path(config.cache_file_path).parent
 cache_dir.mkdir(parents=True, exist_ok=True)
 
 # Check disk space
 import shutil
+
 free_space = shutil.disk_usage(cache_dir).free
 
 # Test persistence manually
@@ -499,20 +489,21 @@ if not success:
 # Monitor cache performance during processing
 def monitor_cache_performance(cache: ContentCache):
     info = cache.get_cache_info()
-    
+
     print(f"""
     Cache Performance Report:
     ========================
-    Hit Rate: {info['stats']['hit_rate']:.1%}
-    Cache Hits: {info['stats']['cache_hits']:,}
-    Cache Misses: {info['stats']['cache_misses']:,}
-    
-    Content Cache: {info['content_cache']['entries']:,}/{info['content_cache']['max_entries']:,} 
-    ({info['content_cache']['usage_percentage']:.1f}% full)
-    
-    Image Cache: {info['image_cache']['entries']:,}/{info['image_cache']['max_entries']:,}
-    ({info['image_cache']['usage_percentage']:.1f}% full)
+    Hit Rate: {info["stats"]["hit_rate"]:.1%}
+    Cache Hits: {info["stats"]["cache_hits"]:,}
+    Cache Misses: {info["stats"]["cache_misses"]:,}
+
+    Content Cache: {info["content_cache"]["entries"]:,}/{info["content_cache"]["max_entries"]:,} 
+    ({info["content_cache"]["usage_percentage"]:.1f}% full)
+
+    Image Cache: {info["image_cache"]["entries"]:,}/{info["image_cache"]["max_entries"]:,}
+    ({info["image_cache"]["usage_percentage"]:.1f}% full)
     """)
+
 
 # Call during processing
 monitor_cache_performance(generator.content_cache)
@@ -524,23 +515,27 @@ monitor_cache_performance(generator.content_cache)
 # Track performance over time
 cache_history = []
 
+
 def log_cache_stats(cache: ContentCache, timestamp: str):
     stats = cache.get_cache_info()
-    cache_history.append({
-        'timestamp': timestamp,
-        'hit_rate': stats['stats']['hit_rate'],
-        'total_entries': stats['stats']['total_entries']
-    })
+    cache_history.append(
+        {
+            "timestamp": timestamp,
+            "hit_rate": stats["stats"]["hit_rate"],
+            "total_entries": stats["stats"]["total_entries"],
+        }
+    )
+
 
 # Analyze trends
 def analyze_cache_trends():
     if len(cache_history) < 2:
         return
-    
+
     latest = cache_history[-1]
     previous = cache_history[-2]
-    
-    hit_rate_change = latest['hit_rate'] - previous['hit_rate']
+
+    hit_rate_change = latest["hit_rate"] - previous["hit_rate"]
     print(f"Hit rate trend: {hit_rate_change:+.1%}")
 ```
 
@@ -552,24 +547,18 @@ def analyze_cache_trends():
 # Production recommendations
 RECOMMENDED_CONFIG = {
     "development": CacheConfig(
-        max_content_entries=200,
-        max_image_entries=100,
-        ttl_hours=1,
-        persist_to_disk=False
+        max_content_entries=200, max_image_entries=100, ttl_hours=1, persist_to_disk=False
     ),
     "staging": CacheConfig(
-        max_content_entries=1000,
-        max_image_entries=500,
-        ttl_hours=24,
-        persist_to_disk=True
+        max_content_entries=1000, max_image_entries=500, ttl_hours=24, persist_to_disk=True
     ),
     "production": CacheConfig(
         max_content_entries=3000,
         max_image_entries=1500,
         ttl_hours=72,
         persist_to_disk=True,
-        similarity_threshold=0.88
-    )
+        similarity_threshold=0.88,
+    ),
 }
 ```
 
@@ -580,15 +569,16 @@ RECOMMENDED_CONFIG = {
 def optimize_for_caching(prompt: str) -> str:
     """Normalize prompts for better cache hit rates."""
     # Remove episode-specific details
-    prompt = re.sub(r'episode \d+', 'episode', prompt, flags=re.IGNORECASE)
-    
+    prompt = re.sub(r"episode \d+", "episode", prompt, flags=re.IGNORECASE)
+
     # Standardize character names
-    prompt = prompt.replace('Deku', 'Izuku Midoriya')
-    
+    prompt = prompt.replace("Deku", "Izuku Midoriya")
+
     # Normalize location names
-    prompt = prompt.replace('U.A.', 'UA High School')
-    
+    prompt = prompt.replace("U.A.", "UA High School")
+
     return prompt.strip()
+
 
 # Use in image generation
 optimized_prompt = optimize_for_caching(original_prompt)
@@ -601,17 +591,17 @@ cached_image = cache.get_or_generate_image(optimized_prompt, generator)
 # Pre-populate cache with common content
 async def warm_cache(cache: ContentCache, common_prompts: List[str]):
     """Pre-generate and cache common visual elements."""
-    
+
     common_scenes = [
         "anime style Hidden Leaf Village overview",
         "anime training ground with practice targets",
         "anime classroom at UA High School",
-        "anime forest clearing with sunlight"
+        "anime forest clearing with sunlight",
     ]
-    
+
     for prompt in common_scenes:
         # Generate and cache common scenes
-        if not cache.find_similar_content({'prompt': prompt}, ContentType.IMAGE):
+        if not cache.find_similar_content({"prompt": prompt}, ContentType.IMAGE):
             logger.info(f"Warming cache with: {prompt}")
             # Generate and cache...
 ```
@@ -623,26 +613,22 @@ async def warm_cache(cache: ContentCache, common_prompts: List[str]):
 def check_cache_health(cache: ContentCache) -> Dict[str, Any]:
     """Comprehensive cache health assessment."""
     info = cache.get_cache_info()
-    
-    health_status = {
-        'overall_health': 'healthy',
-        'issues': [],
-        'recommendations': []
-    }
-    
+
+    health_status = {"overall_health": "healthy", "issues": [], "recommendations": []}
+
     # Check hit rate
-    hit_rate = info['stats']['hit_rate']
+    hit_rate = info["stats"]["hit_rate"]
     if hit_rate < 0.2:
-        health_status['issues'].append('Low cache hit rate')
-        health_status['recommendations'].append('Lower similarity threshold')
-        health_status['overall_health'] = 'warning'
-    
+        health_status["issues"].append("Low cache hit rate")
+        health_status["recommendations"].append("Lower similarity threshold")
+        health_status["overall_health"] = "warning"
+
     # Check cache utilization
-    content_usage = info['content_cache']['usage_percentage']
+    content_usage = info["content_cache"]["usage_percentage"]
     if content_usage > 90:
-        health_status['issues'].append('Content cache near capacity')
-        health_status['recommendations'].append('Increase max_content_entries')
-    
+        health_status["issues"].append("Content cache near capacity")
+        health_status["recommendations"].append("Increase max_content_entries")
+
     return health_status
 ```
 
@@ -719,21 +705,21 @@ cache = create_content_cache(
 # Validate cached content before use
 def validate_cached_content(content: Any, content_type: ContentType) -> bool:
     """Validate cached content meets security and quality standards."""
-    
+
     if content_type == ContentType.IMAGE:
         # Validate image paths are within expected directories
-        if 'image_path' in content:
-            path = Path(content['image_path'])
-            if not str(path).startswith('/expected/image/directory'):
+        if "image_path" in content:
+            path = Path(content["image_path"])
+            if not str(path).startswith("/expected/image/directory"):
                 return False
-    
+
     if content_type == ContentType.TEXT:
         # Validate text content doesn't contain sensitive data
-        sensitive_patterns = ['api_key', 'password', 'secret']
+        sensitive_patterns = ["api_key", "password", "secret"]
         content_str = str(content).lower()
         if any(pattern in content_str for pattern in sensitive_patterns):
             return False
-    
+
     return True
 ```
 
@@ -743,6 +729,7 @@ def validate_cached_content(content: Any, content_type: ContentType) -> bool:
 # Secure cache file permissions
 import os
 import stat
+
 
 def secure_cache_file(cache_file_path: str):
     """Set secure permissions on cache file."""
@@ -778,24 +765,24 @@ async def maintain_cache(cache: ContentCache):
 # Periodic performance analysis
 def analyze_cache_performance(cache: ContentCache) -> Dict[str, str]:
     """Analyze cache performance and provide optimization recommendations."""
-    
+
     info = cache.get_cache_info()
     recommendations = []
-    
-    hit_rate = info['stats']['hit_rate']
+
+    hit_rate = info["stats"]["hit_rate"]
     if hit_rate < 0.3:
         recommendations.append("Consider lowering similarity_threshold to 0.80")
     elif hit_rate > 0.8:
         recommendations.append("Consider increasing similarity_threshold to 0.90")
-    
-    content_usage = info['content_cache']['usage_percentage']
+
+    content_usage = info["content_cache"]["usage_percentage"]
     if content_usage > 85:
         recommendations.append("Consider increasing max_content_entries")
-    
+
     return {
-        'hit_rate': f"{hit_rate:.1%}",
-        'recommendations': recommendations,
-        'overall_status': 'optimal' if 0.3 <= hit_rate <= 0.8 else 'needs_tuning'
+        "hit_rate": f"{hit_rate:.1%}",
+        "recommendations": recommendations,
+        "overall_status": "optimal" if 0.3 <= hit_rate <= 0.8 else "needs_tuning",
     }
 ```
 

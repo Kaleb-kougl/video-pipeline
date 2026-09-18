@@ -65,7 +65,7 @@ result = agent.find_episode_transcript(
     show_name="My Hero Academia",
     season=1,
     episode=4,
-    episode_title="Start Line"  # Optional, improves accuracy
+    episode_title="Start Line",  # Optional, improves accuracy
 )
 
 if result:
@@ -73,10 +73,10 @@ if result:
     print(f"Quality Score: {result['quality_score']:.2f}")
     print(f"Content Length: {result['content_length']} characters")
     print(f"URL: {result['url']}")
-    
+
     # Access the actual transcript
-    transcript = result['transcript']
-    title = result['title']
+    transcript = result["transcript"]
+    title = result["title"]
 else:
     print("No transcript found")
 ```
@@ -95,24 +95,26 @@ from agents.workflow_orchestrator import WorkflowOrchestrator
 orchestrator = WorkflowOrchestrator()
 
 # Process a single episode (includes transcript discovery + AI processing)
-result = asyncio.run(orchestrator.process_episode_complete(
-    show_name="Attack on Titan",
-    season=1,
-    episode=4,
-    episode_title="Start Line",
-))
+result = asyncio.run(
+    orchestrator.process_episode_complete(
+        show_name="Attack on Titan",
+        season=1,
+        episode=4,
+        episode_title="Start Line",
+    )
+)
 
-if result['success']:
-    episode_data = result['data']
-    source_info = result['source_info']
-    
+if result["success"]:
+    episode_data = result["data"]
+    source_info = result["source_info"]
+
     print(f"Successfully processed {episode_data['show']}")
     print(f"Found via: {source_info['source']}")
     print(f"Quality: {source_info['quality_score']:.2f}")
-    
+
     # Generated content is available
-    youtube_transcript = episode_data['youtube_transcript']
-    plot_points = episode_data['plot_points']
+    youtube_transcript = episode_data["youtube_transcript"]
+    plot_points = episode_data["plot_points"]
 ```
 
 ## Supported Anime Shows
@@ -147,22 +149,19 @@ The agent can attempt to find transcripts for any anime show by:
 agent = TranscriptDiscoveryAgent()
 
 # Add a custom source
-agent.sources['custom_site'] = {
-    'base_url': 'https://example-transcripts.com',
-    'search_patterns': [
-        '/{show_slug}/season-{season}/episode-{episode}',
-        '/{show_slug}/s{season:02d}e{episode:02d}'
+agent.sources["custom_site"] = {
+    "base_url": "https://example-transcripts.com",
+    "search_patterns": [
+        "/{show_slug}/season-{season}/episode-{episode}",
+        "/{show_slug}/s{season:02d}e{episode:02d}",
     ],
-    'transcript_selector': '.transcript-text',
-    'title_selector': 'h1.episode-title'
+    "transcript_selector": ".transcript-text",
+    "title_selector": "h1.episode-title",
 }
 
 # Search specific source only
 result = agent.search_source(
-    source_name='subslikescript',
-    show_name="Death Note",
-    season=1,
-    episode=1
+    source_name="subslikescript", show_name="Death Note", season=1, episode=1
 )
 ```
 
@@ -213,7 +212,7 @@ python tests/test_transcript_agent.py --mode shows
 test_cases = [
     ("Spirited Away", 1, 1, None),
     ("Princess Mononoke", 1, 1, None),
-    ("Your Name", 1, 1, None)
+    ("Your Name", 1, 1, None),
 ]
 
 for show, season, episode, title in test_cases:
@@ -246,12 +245,12 @@ The enhanced agent can now handle challenging show names like:
 ```python
 complex_shows = [
     "Frieren: Beyond Journey's End",
-    "86: Eighty-Six", 
+    "86: Eighty-Six",
     "Re:Zero - Starting Life in Another World",
     "That Time I Got Reincarnated as a Slime",
     "Is It Wrong to Try to Pick Up Girls in a Dungeon?",
     "KonoSuba: God's Blessing on This Wonderful World!",
-    "Rascal Does Not Dream of Bunny Girl Senpai"
+    "Rascal Does Not Dream of Bunny Girl Senpai",
 ]
 
 agent = TranscriptDiscoveryAgent()
@@ -265,10 +264,10 @@ for show in complex_shows:
 ```python
 # The agent can dynamically discover working patterns
 result = agent.find_episode_transcript(
-    "Frieren: Beyond Journey's End", 
-    season=1, 
+    "Frieren: Beyond Journey's End",
+    season=1,
     episode=1,
-    use_discovery=True  # Enables dynamic discovery
+    use_discovery=True,  # Enables dynamic discovery
 )
 
 if result:

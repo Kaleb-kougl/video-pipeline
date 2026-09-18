@@ -8,8 +8,8 @@ visual consistency based on character importance and development.
 """
 
 import logging
-from typing import Dict, List, Any
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -33,7 +33,7 @@ class EpisodeCharacterEnhancer:
     - Maintaining character development context throughout episodes
     """
 
-    def __init__(self, character_analyzer, timing_calculator):
+    def __init__(self, character_analyzer: Any, timing_calculator: Any) -> None:
         """
         Initialize the Episode Character Enhancer.
 
@@ -46,8 +46,8 @@ class EpisodeCharacterEnhancer:
         self.logger = logging.getLogger(__name__)
 
     async def enhance_episode_with_character_data(
-        self, episode_content: Dict[str, Any], character_analysis: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, episode_content: dict[str, Any], character_analysis: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Integrate character insights into episode processing.
 
@@ -67,9 +67,7 @@ class EpisodeCharacterEnhancer:
         # Process each scene with character enhancement
         for scene in episode_content["scenes"]:
             # Identify characters in this specific scene
-            scene_characters = self._identify_scene_characters(
-                scene, episode_characters
-            )
+            scene_characters = self._identify_scene_characters(scene, episode_characters)
 
             # Calculate character importance weights for this scene
             character_weights = await self._calculate_character_weights(
@@ -109,9 +107,7 @@ class EpisodeCharacterEnhancer:
             "total_duration": total_duration,
         }
 
-    async def _extract_episode_characters(
-        self, episode_content: Dict[str, Any]
-    ) -> List[str]:
+    async def _extract_episode_characters(self, episode_content: dict[str, Any]) -> list[str]:
         """
         Extract all unique characters mentioned across episode scenes.
 
@@ -130,8 +126,8 @@ class EpisodeCharacterEnhancer:
         return sorted(list(all_characters))
 
     def _identify_scene_characters(
-        self, scene: Dict[str, Any], episode_characters: List[str]
-    ) -> List[str]:
+        self, scene: dict[str, Any], episode_characters: list[str]
+    ) -> list[str]:
         """
         Identify which characters are present in a specific scene.
 
@@ -145,15 +141,13 @@ class EpisodeCharacterEnhancer:
         scene_characters = scene.get("characters", [])
 
         # Filter to only include known episode characters
-        identified_characters = [
-            char for char in scene_characters if char in episode_characters
-        ]
+        identified_characters = [char for char in scene_characters if char in episode_characters]
 
         return identified_characters
 
     async def _calculate_character_weights(
-        self, scene_characters: List[str], character_analysis: Dict[str, Any]
-    ) -> List[CharacterWeight]:
+        self, scene_characters: list[str], character_analysis: dict[str, Any]
+    ) -> list[CharacterWeight]:
         """
         Calculate character importance weights for timing adjustment.
 
@@ -172,15 +166,9 @@ class EpisodeCharacterEnhancer:
                 profile = character_profiles[character]
 
                 # Extract and clamp values to valid ranges
-                importance_score = max(
-                    0.0, min(1.0, profile.get("importance_score", 0.5))
-                )
-                development_factor = max(
-                    0.0, min(1.0, profile.get("character_development", 0.5))
-                )
-                screen_time_ratio = max(
-                    0.0, min(1.0, profile.get("screen_time_percentage", 0.1))
-                )
+                importance_score = max(0.0, min(1.0, profile.get("importance_score", 0.5)))
+                development_factor = max(0.0, min(1.0, profile.get("character_development", 0.5)))
+                screen_time_ratio = max(0.0, min(1.0, profile.get("screen_time_percentage", 0.1)))
 
                 weight = CharacterWeight(
                     character_name=character,
@@ -199,7 +187,7 @@ class EpisodeCharacterEnhancer:
         return weights
 
     def _adjust_timing_for_characters(
-        self, base_duration: float, character_weights: List[CharacterWeight]
+        self, base_duration: float, character_weights: list[CharacterWeight]
     ) -> float:
         """
         Adjust scene timing based on character importance weights.
@@ -217,9 +205,7 @@ class EpisodeCharacterEnhancer:
         # Calculate combined character importance
         # Use maximum importance for scenes with multiple important characters
         max_importance = max(w.importance_score for w in character_weights)
-        avg_importance = sum(w.importance_score for w in character_weights) / len(
-            character_weights
-        )
+        avg_importance = sum(w.importance_score for w in character_weights) / len(character_weights)
 
         # Use weighted importance (favor maximum but consider average)
         combined_importance = (max_importance * 0.7) + (avg_importance * 0.3)
@@ -236,13 +222,9 @@ class EpisodeCharacterEnhancer:
 
         # Adjustment factor: 0.7 to 1.3 (±30% as specified)
         importance_multiplier = 0.7 + (combined_importance * 0.6)  # 0.7-1.3 range
-        development_bonus = (
-            combined_development * 0.2
-        )  # Up to 20% bonus for development
+        development_bonus = combined_development * 0.2  # Up to 20% bonus for development
 
-        adjustment_factor = (
-            importance_multiplier + development_bonus + character_count_bonus
-        )
+        adjustment_factor = importance_multiplier + development_bonus + character_count_bonus
         adjusted_duration = base_duration * adjustment_factor
 
         # Enforce constraints: 1.5-15.0 seconds
@@ -258,8 +240,8 @@ class EpisodeCharacterEnhancer:
     async def _enhance_prompt_with_character_context(
         self,
         base_prompt: str,
-        scene_characters: List[str],
-        character_analysis: Dict[str, Any],
+        scene_characters: list[str],
+        character_analysis: dict[str, Any],
     ) -> str:
         """
         Enhance visual prompt with character appearance consistency.

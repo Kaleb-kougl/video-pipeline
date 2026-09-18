@@ -7,12 +7,13 @@ deadline pressure, and performance optimization feedback to maintain
 optimal balance between quality and performance.
 """
 
-import psutil
-import logging
-from datetime import datetime, timedelta
-from typing import Dict, Optional, NamedTuple, Tuple, Any, List
-from dataclasses import dataclass, replace
 import copy
+import logging
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, NamedTuple
+
+import psutil
 
 
 @dataclass
@@ -21,7 +22,7 @@ class QualityProfile:
 
     name: str
     image_quality: float  # 0.0 to 1.0
-    video_resolution: Tuple[int, int]  # (width, height)
+    video_resolution: tuple[int, int]  # (width, height)
     compression_level: int  # 1-9 for PNG, 0-100 for JPEG
     processing_priority: str  # 'speed', 'balanced', 'quality'
     max_concurrent_jobs: int
@@ -49,7 +50,7 @@ class AdaptiveQualityManager:
     - Memory constraint enforcement (<4GB peak usage)
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the Adaptive Quality Manager with default profiles."""
         self.quality_profiles = {
             "draft": QualityProfile(
@@ -81,7 +82,7 @@ class AdaptiveQualityManager:
             ),
         }
 
-        self.quality_history: List[Dict[str, Any]] = []
+        self.quality_history: list[dict[str, Any]] = []
         self.logger = logging.getLogger(__name__)
 
         self.logger.info("Adaptive Quality Manager initialized with default profiles")
@@ -89,8 +90,8 @@ class AdaptiveQualityManager:
     async def select_quality_profile(
         self,
         context: str,
-        deadline: Optional[datetime] = None,
-        target_duration: Optional[int] = None,
+        deadline: datetime | None = None,
+        target_duration: int | None = None,
         use_optimization: bool = False,
     ) -> QualityProfile:
         """
@@ -182,7 +183,7 @@ class AdaptiveQualityManager:
                 available_disk_gb=10.0,
             )
 
-    def _calculate_time_pressure(self, deadline: Optional[datetime]) -> float:
+    def _calculate_time_pressure(self, deadline: datetime | None) -> float:
         """
         Calculate time pressure from deadline.
 
@@ -255,9 +256,7 @@ class AdaptiveQualityManager:
             # CPU-based adjustments
             if resources.cpu_cores <= 2:
                 # Low CPU cores - limit concurrency strictly
-                profile.max_concurrent_jobs = min(
-                    profile.max_concurrent_jobs, resources.cpu_cores
-                )
+                profile.max_concurrent_jobs = min(profile.max_concurrent_jobs, resources.cpu_cores)
 
             if resources.cpu_usage_percent > 80:
                 # High CPU usage - further reduce concurrent jobs
@@ -350,8 +349,7 @@ class AdaptiveQualityManager:
             if successful_configs:
                 # Calculate average successful memory usage
                 avg_memory = sum(
-                    config["processing_metrics"]["memory_usage_mb"]
-                    for config in successful_configs
+                    config["processing_metrics"]["memory_usage_mb"] for config in successful_configs
                 ) / len(successful_configs)
 
                 # Adjust memory limit based on successful usage patterns
@@ -375,9 +373,7 @@ class AdaptiveQualityManager:
 
                     if avg_failed_memory > 4000:  # Failed due to memory
                         profile.memory_limit_mb = min(profile.memory_limit_mb, 3000)
-                        profile.max_concurrent_jobs = max(
-                            1, profile.max_concurrent_jobs - 1
-                        )
+                        profile.max_concurrent_jobs = max(1, profile.max_concurrent_jobs - 1)
 
             return profile
 
@@ -386,7 +382,7 @@ class AdaptiveQualityManager:
             return profile
 
     def record_quality_metrics(
-        self, profile: QualityProfile, processing_metrics: Dict[str, Any]
+        self, profile: QualityProfile, processing_metrics: dict[str, Any]
     ) -> None:
         """
         Record quality metrics for future optimization.

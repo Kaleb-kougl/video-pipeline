@@ -2,18 +2,17 @@
 Database management for storing and retrieving episode information.
 """
 
-import sqlite3
 import json
 import logging
-from typing import Optional, Dict, Any, List
-from datetime import datetime
+import sqlite3
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
     """Manages the SQLite database for storing and retrieving episode information."""
-    
+
     def __init__(self, db_path: str = "data/databases/video_generator.db"):
         """
         Initialize the DatabaseManager.
@@ -23,7 +22,7 @@ class DatabaseManager:
         """
         self.db_path = db_path
         self.init_database()
-    
+
     def init_database(self) -> None:
         """Initialize the database tables if they don't already exist."""
         with sqlite3.connect(self.db_path) as conn:
@@ -44,7 +43,7 @@ class DatabaseManager:
                     UNIQUE(show, season, episode)
                 )
             """)
-            
+
             # Create the 'processing_logs' table to log the status of various tasks.
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS processing_logs (
@@ -58,18 +57,25 @@ class DatabaseManager:
                     FOREIGN KEY (episode_id) REFERENCES episodes (id)
                 )
             """)
-            
+
             # Create index for faster queries
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_episodes_show_season_episode 
                 ON episodes(show, season, episode)
             """)
-            
+
             logger.info("Database initialized successfully")
-    
-    def save_episode(self, show: str, season: str, episode: str, url: str, 
-                    transcript: Optional[str] = None, summary: Optional[str] = None, 
-                    plot_points: Optional[list] = None) -> None:
+
+    def save_episode(
+        self,
+        show: str,
+        season: str,
+        episode: str,
+        url: str,
+        transcript: str | None = None,
+        summary: str | None = None,
+        plot_points: list | None = None,
+    ) -> None:
         """
         Save or update an episode's data in the database.
 
@@ -84,20 +90,30 @@ class DatabaseManager:
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT OR REPLACE INTO episodes 
                     (show, season, episode, url, transcript, summary, plot_points, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, (show, season, episode, url, transcript, summary, 
-                     json.dumps(plot_points) if plot_points else None))
-                
+                """,
+                    (
+                        show,
+                        season,
+                        episode,
+                        url,
+                        transcript,
+                        summary,
+                        json.dumps(plot_points) if plot_points else None,
+                    ),
+                )
+
                 logger.info(f"Saved episode: {show} S{season}E{episode}")
-                
+
         except sqlite3.Error as e:
             logger.error(f"Database error saving episode {show} S{season}E{episode}: {e}")
             raise
-    
-    def get_episode(self, show: str, season: str, episode: str) -> Optional[sqlite3.Row]:
+
+    def get_episode(self, show: str, season: str, episode: str) -> sqlite3.Row | None:
         """
         Retrieve a specific episode's data from the database.
 
@@ -112,59 +128,74 @@ class DatabaseManager:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     SELECT * FROM episodes WHERE show = ? AND season = ? AND episode = ?
-                """, (show, season, episode))
+                """,
+                    (show, season, episode),
+                )
                 result = cursor.fetchone()
-                
+
                 if result:
                     logger.debug(f"Retrieved episode: {show} S{season}E{episode}")
-                
+
                 return result
-                
+
         except sqlite3.Error as e:
             logger.error(f"Database error retrieving episode {show} S{season}E{episode}: {e}")
             return None
-    
-    def get_episodes_by_show(self, show: str, season: Optional[str] = None) -> list:
+
+    def get_episodes_by_show(self, show: str, season: str | None = None) -> list:
         """
         Get all episodes for a show, optionally filtered by season.
-        
+
         Args:
             show (str): The name of the show.
             season (str, optional): The season number to filter by.
-            
+
         Returns:
             list: List of episode rows.
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
-                
+
                 if season:
-                    cursor = conn.execute("""
+                    cursor = conn.execute(
+                        """
                         SELECT * FROM episodes 
                         WHERE show = ? AND season = ? 
                         ORDER BY CAST(season AS INTEGER), CAST(episode AS INTEGER)
-                    """, (show, season))
+                    """,
+                        (show, season),
+                    )
                 else:
-                    cursor = conn.execute("""
+                    cursor = conn.execute(
+                        """
                         SELECT * FROM episodes 
                         WHERE show = ? 
                         ORDER BY CAST(season AS INTEGER), CAST(episode AS INTEGER)
-                    """, (show,))
-                
+                    """,
+                        (show,),
+                    )
+
                 return cursor.fetchall()
-                
+
         except sqlite3.Error as e:
             logger.error(f"Database error retrieving episodes for {show}: {e}")
             return []
-    
-    def log_processing_task(self, episode_id: int, task_type: str, status: str, 
-                          error_message: Optional[str] = None, processing_time: Optional[float] = None) -> None:
+
+    def log_processing_task(
+        self,
+        episode_id: int,
+        task_type: str,
+        status: str,
+        error_message: str | None = None,
+        processing_time: float | None = None,
+    ) -> None:
         """
         Log a processing task to the database.
-        
+
         Args:
             episode_id (int): The episode ID.
             task_type (str): Type of task (e.g., 'transcript_discovery', 'video_generation').
@@ -174,40 +205,43 @@ class DatabaseManager:
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO processing_logs 
                     (episode_id, task_type, status, error_message, processing_time)
                     VALUES (?, ?, ?, ?, ?)
-                """, (episode_id, task_type, status, error_message, processing_time))
-                
+                """,
+                    (episode_id, task_type, status, error_message, processing_time),
+                )
+
                 logger.debug(f"Logged processing task: {task_type} - {status}")
-                
+
         except sqlite3.Error as e:
             logger.error(f"Database error logging task: {e}")
-    
-    def get_processing_stats(self) -> Dict[str, Any]:
+
+    def get_processing_stats(self) -> dict[str, Any]:
         """
         Get processing statistics.
-        
+
         Returns:
             dict: Statistics about processed episodes.
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
-                
+
                 # Get episode counts by status
                 cursor = conn.execute("""
                     SELECT status, COUNT(*) as count 
                     FROM episodes 
                     GROUP BY status
                 """)
-                status_counts = {row['status']: row['count'] for row in cursor.fetchall()}
-                
+                status_counts = {row["status"]: row["count"] for row in cursor.fetchall()}
+
                 # Get total episodes
                 cursor = conn.execute("SELECT COUNT(*) as total FROM episodes")
-                total = cursor.fetchone()['total']
-                
+                total = cursor.fetchone()["total"]
+
                 # Get recent processing activity
                 cursor = conn.execute("""
                     SELECT task_type, status, COUNT(*) as count 
@@ -216,21 +250,21 @@ class DatabaseManager:
                     GROUP BY task_type, status
                 """)
                 recent_activity = cursor.fetchall()
-                
+
                 return {
-                    'total_episodes': total,
-                    'status_counts': status_counts,
-                    'recent_activity': [dict(row) for row in recent_activity]
+                    "total_episodes": total,
+                    "status_counts": status_counts,
+                    "recent_activity": [dict(row) for row in recent_activity],
                 }
-                
+
         except sqlite3.Error as e:
             logger.error(f"Database error getting stats: {e}")
-            return {'total_episodes': 0, 'status_counts': {}, 'recent_activity': []}
-    
+            return {"total_episodes": 0, "status_counts": {}, "recent_activity": []}
+
     def update_episode_status(self, show: str, season: str, episode: str, status: str) -> None:
         """
         Update the status of an episode.
-        
+
         Args:
             show (str): The name of the show.
             season (str): The season number.
@@ -239,14 +273,17 @@ class DatabaseManager:
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute("""
+                conn.execute(
+                    """
                     UPDATE episodes 
                     SET status = ?, updated_at = CURRENT_TIMESTAMP 
                     WHERE show = ? AND season = ? AND episode = ?
-                """, (status, show, season, episode))
-                
+                """,
+                    (status, show, season, episode),
+                )
+
                 logger.debug(f"Updated episode status: {show} S{season}E{episode} -> {status}")
-                
+
         except sqlite3.Error as e:
             logger.error(f"Database error updating episode status: {e}")
             raise
@@ -269,129 +306,154 @@ class DatabaseManager:
             """)
             logger.debug("Season summaries table initialized")
 
-    def save_season_summary(self, show: str, season: int, summary: str, 
-                          analysis_data: Dict = None, media_files: Dict = None) -> int:
+    def save_season_summary(
+        self,
+        show: str,
+        season: int,
+        summary: str,
+        analysis_data: dict | None = None,
+        media_files: dict | None = None,
+    ) -> int | None:
         """
         Save or update a season summary.
-        
+
         Args:
             show: Show name
             season: Season number
             summary: Season summary text
             analysis_data: Analysis data dictionary
             media_files: Media files dictionary
-            
+
         Returns:
             The ID of the saved summary
         """
         # Ensure table exists
         self.init_season_summaries_table()
-        
+
         try:
             with sqlite3.connect(self.db_path) as conn:
                 # Convert dictionaries to JSON strings
                 analysis_json = json.dumps(analysis_data) if analysis_data else None
                 media_json = json.dumps(media_files) if media_files else None
-                
+
                 # Use INSERT OR REPLACE to handle duplicates
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     INSERT OR REPLACE INTO season_summaries 
                     (show, season, summary, analysis_data, media_files, updated_at)
                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, (show, season, summary, analysis_json, media_json))
-                
+                """,
+                    (show, season, summary, analysis_json, media_json),
+                )
+
                 summary_id = cursor.lastrowid
                 logger.info(f"Saved season summary: {show} Season {season} (ID: {summary_id})")
                 return summary_id
-                
+
         except sqlite3.Error as e:
             logger.error(f"Database error saving season summary: {e}")
             raise
 
-    def get_season_summary(self, show: str, season: int) -> Optional[Dict]:
+    def get_season_summary(self, show: str, season: int) -> dict | None:
         """
         Retrieve a season summary.
-        
+
         Args:
             show: Show name
             season: Season number
-            
+
         Returns:
             Dictionary with summary data or None if not found
         """
         # Ensure table exists
         self.init_season_summaries_table()
-        
+
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     SELECT * FROM season_summaries 
                     WHERE show = ? AND season = ?
-                """, (show, season))
-                
+                """,
+                    (show, season),
+                )
+
                 row = cursor.fetchone()
                 if row:
                     return {
-                        'id': row['id'],
-                        'show': row['show'],
-                        'season': row['season'],
-                        'summary': row['summary'],
-                        'analysis_data': json.loads(row['analysis_data']) if row['analysis_data'] else None,
-                        'media_files': json.loads(row['media_files']) if row['media_files'] else None,
-                        'created_at': row['created_at'],
-                        'updated_at': row['updated_at']
+                        "id": row["id"],
+                        "show": row["show"],
+                        "season": row["season"],
+                        "summary": row["summary"],
+                        "analysis_data": json.loads(row["analysis_data"])
+                        if row["analysis_data"]
+                        else None,
+                        "media_files": json.loads(row["media_files"])
+                        if row["media_files"]
+                        else None,
+                        "created_at": row["created_at"],
+                        "updated_at": row["updated_at"],
                     }
                 return None
-                
+
         except sqlite3.Error as e:
             logger.error(f"Database error retrieving season summary: {e}")
             return None
 
-    def get_all_season_summaries(self, show: str = None) -> List[Dict]:
+    def get_all_season_summaries(self, show: str | None = None) -> list[dict]:
         """
         Retrieve all season summaries, optionally filtered by show.
-        
+
         Args:
             show: Optional show name to filter by
-            
+
         Returns:
             List of season summary dictionaries
         """
         # Ensure table exists
         self.init_season_summaries_table()
-        
+
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
-                
+
                 if show:
-                    cursor = conn.execute("""
+                    cursor = conn.execute(
+                        """
                         SELECT * FROM season_summaries 
                         WHERE show = ?
                         ORDER BY season
-                    """, (show,))
+                    """,
+                        (show,),
+                    )
                 else:
                     cursor = conn.execute("""
                         SELECT * FROM season_summaries 
                         ORDER BY show, season
                     """)
-                
+
                 summaries = []
                 for row in cursor.fetchall():
-                    summaries.append({
-                        'id': row['id'],
-                        'show': row['show'],
-                        'season': row['season'],
-                        'summary': row['summary'],
-                        'analysis_data': json.loads(row['analysis_data']) if row['analysis_data'] else None,
-                        'media_files': json.loads(row['media_files']) if row['media_files'] else None,
-                        'created_at': row['created_at'],
-                        'updated_at': row['updated_at']
-                    })
-                
+                    summaries.append(
+                        {
+                            "id": row["id"],
+                            "show": row["show"],
+                            "season": row["season"],
+                            "summary": row["summary"],
+                            "analysis_data": json.loads(row["analysis_data"])
+                            if row["analysis_data"]
+                            else None,
+                            "media_files": json.loads(row["media_files"])
+                            if row["media_files"]
+                            else None,
+                            "created_at": row["created_at"],
+                            "updated_at": row["updated_at"],
+                        }
+                    )
+
                 return summaries
-                
+
         except sqlite3.Error as e:
             logger.error(f"Database error retrieving season summaries: {e}")
             return []
