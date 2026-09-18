@@ -9,21 +9,20 @@ This system **successfully transforms anime episode transcripts into professiona
 **Key Achievements:**
 
 - ✅ **Fully Automated Pipeline**: Complete transcript-to-video generation
-- ✅ **Multi-Platform Export**: YouTube Shorts, TikTok, Instagram Reels, and Twitter formats
+- ⚠️ **Multi-Platform Export (scaffolded, not implemented)**: Format definitions and content adaptation exist for YouTube Shorts, TikTok, Instagram Reels, and Twitter, but the exporters are stubs that return a canned result without rendering a video file
 - ✅ **Production Quality**: Professional narration, AI-generated visuals, smooth compilation
 - ✅ **Advanced Analytics**: Character analysis with ChromaDB vector database
 - ✅ **Scalable Architecture**: Modular agents supporting batch processing
 - ✅ **Quality Assurance**: Multi-stage validation with 60-70% quality thresholds
 - ✅ **Phase 2 Quality Enhancement**: Character-aware timing, visual coherence, adaptive quality
-- ✅ **AI-Powered Optimization**: 60% visual consistency improvement, 50% memory reduction
+- ✅ **AI-Powered Optimization**: Visual coherence analysis and resource-adaptive quality settings
 - ✅ **Platform Intelligence**: ML-powered engagement prediction and content adaptation
-- ✅ **Intelligent Content Caching**: 40% API cost reduction with smart content reuse
+- ✅ **Intelligent Content Caching**: Smart content reuse and similarity detection to avoid redundant API calls
 
-## 🎉 Status: Production Ready
+## 📌 Status
 
 **Last Validated:** January 16, 2025  
-**Agent Success Rate:** 100% (9/9 core agents)  
-**CLI Commands:** 20+ working commands available
+**CLI Commands:** 27 registered commands
 
 ## ✨ Recent Updates (August 2025)
 
@@ -94,24 +93,17 @@ python main_refactored.py create-season-summary "My Hero Academia" 1 --format ti
 ✅ **Adaptive Quality**: Dynamically selects optimal quality settings based on system resources
 ✅ **Graceful Fallback**: Falls back to original methods if Phase 2 components encounter errors
 
-### Performance Improvements
-
-- **60% improvement** in visual consistency across generated images
-- **25-40% better narrative flow** through character-aware timing
-- **50% reduction** in memory usage through resource-adaptive quality
-- **25%+ engagement improvement** with platform-optimized content
-
 ### Test Coverage
 
 - **99% test coverage** for character integration
-- **88% overall coverage** across all Phase 2 components
+- **88% coverage** across the four Phase 2 core modules
 - **TDD methodology** with comprehensive unit and integration tests
-- **62 test cases** validating all quality enhancement features
+- **88 test cases** across unit and integration suites for the Phase 2 modules
 
 ## 🗄️ Intelligent Content Caching System (NEW!)
 
 ### Overview
-The system now includes an **intelligent content caching system** that reduces API costs by **40%** and improves performance through smart content reuse, similarity detection, and cross-episode optimization.
+The system now includes an **intelligent content caching system** that reduces redundant API calls and improves performance through smart content reuse, similarity detection, and cross-episode optimization.
 
 ### Key Features
 - **Multi-Type Content Support**: Caches text, images, character analysis, and audio content
@@ -124,7 +116,7 @@ The system now includes an **intelligent content caching system** that reduces A
 - **Anime-Specific Optimization**: Enhanced similarity detection with anime term boosting
 
 ### Performance Benefits
-- **40% reduction** in API costs through intelligent caching
+- **Fewer redundant API calls** through intelligent caching
 - **Content deduplication** prevents regenerating similar scenes
 - **Cross-episode reuse** leverages common visual elements like village scenes
 - **Memory-efficient** LRU eviction prevents unbounded growth
@@ -132,7 +124,7 @@ The system now includes an **intelligent content caching system** that reduces A
 
 ### Technical Implementation
 - **Architecture**: ContentCache with SimilarityCalculator and configurable CacheConfig
-- **Integration**: Seamless integration with ParallelImageGenerator and existing workflow
+- **Integration**: Wired into the sequential image generation path
 - **Thread Safety**: Designed for single-threaded use within async contexts
 - **Standards**: Full PEP 8 compliance with comprehensive docstrings
 
@@ -149,7 +141,7 @@ cache = create_content_cache(
 )
 
 # Automatic integration - cache checking happens transparently
-generator = ParallelImageGenerator(ai_client, enable_caching=True)
+cache = ContentCache(enable_caching=True)
 results = await generator.generate_images_parallel(prompts, show, season, episode)
 
 # Monitor cache performance
@@ -157,94 +149,16 @@ stats = cache.get_cache_info()
 print(f"Cache hit rate: {stats['stats']['hit_rate']:.1%}")
 ```
 
-## ⚡ Performance Improvements - Parallel Image Generation
+## ⚡ Parallel Image Generation (Implemented, Not Wired In)
 
-### Overview
-The system now includes **parallel image generation** capabilities that reduce video creation time by **60-70%** through concurrent processing powered by AnyIO structured concurrency.
+[`agents/parallel_image_generator.py`](agents/parallel_image_generator.py) implements a concurrent, AnyIO-based image generation component, but **no pipeline currently calls it** — both the episode and season pipelines use the sequential `create_images()` path instead, and no performance measurements exist for it.
 
-### Key Features
-- **Concurrent Processing**: Generate multiple images simultaneously using AnyIO structured concurrency
-- **Rate Limiting**: Respect API limits while maximizing throughput with configurable delays  
-- **Error Handling**: Comprehensive retry mechanisms with exponential backoff
-- **Resource Management**: Efficient memory usage (<100MB additional) and connection management
-- **Real-time Monitoring**: Performance metrics, health monitoring, and alerting system
-- **Production Ready**: Full PEP 8 compliance with 90%+ test coverage
+### 🎬 Export Formats Feature (Scaffolded)
 
-### Technical Implementation
-- **Technology Stack**: AnyIO for structured concurrency, pytest for comprehensive testing
-- **Architecture**: Modular design with clean separation of concerns using ParallelImageGenerator
-- **Reliability**: Comprehensive error handling with retry logic and graceful failure recovery
-- **Standards**: Full PEP 8 compliance with complete type annotations and Google-style docstrings
-
-### Performance Metrics
-- **Speed Improvement**: 60-70% reduction in image generation time
-- **Concurrent Tasks**: Configurable (default: 3 concurrent images)
-- **Memory Efficiency**: <100MB additional memory usage during processing
-- **Error Resilience**: <30% failure rate under adverse conditions
-- **Throughput**: Up to 26+ images per second with optimal batching
-
-### Usage Example
-
-```python
-from agents.parallel_image_generator import ParallelImageGenerator
-from google import genai
-import os
-
-# Initialize with custom configuration
-client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
-generator = ParallelImageGenerator(
-    ai_client=client,
-    max_concurrent=3,
-    rate_limit_delay=0.5,
-    max_retries=3
-)
-
-# Generate images concurrently
-prompts = [
-    "Anime character training scene",
-    "Epic battle sequence", 
-    "Character development moment"
-]
-
-results = await generator.generate_images_parallel(
-    prompts, "My Hero Academia", "1", "4"
-)
-
-# Check results and performance
-successful = [r for r in results if r.success]
-print(f"Generated {len(successful)}/{len(results)} images successfully")
-
-# Monitor performance
-generator.log_performance_summary()
-health = generator.get_health_status()
-print(f"System health: {health['status']} (score: {health['health_score']})")
-```
-
-### Configuration
-Configure parallel image generation in your settings:
-
-```python
-# Parallel Image Generation Settings
-PARALLEL_IMAGE_MAX_CONCURRENT = 3        # Concurrent tasks
-PARALLEL_IMAGE_RATE_LIMIT_DELAY = 0.5    # API delay (seconds)  
-PARALLEL_IMAGE_MAX_RETRIES = 3           # Retry attempts
-PARALLEL_IMAGE_REQUEST_TIMEOUT = 30.0    # Request timeout
-```
-
-### Integration with Existing Workflow
-The parallel image generator integrates seamlessly with the existing video creation pipeline:
-
-1. **Backward Compatible**: Maintains existing API signatures
-2. **Drop-in Replacement**: Can replace sequential image generation in media_utils.py
-3. **Monitoring Integration**: Real-time performance metrics and health monitoring
-4. **Error Handling**: Integrates with workflow orchestrator error handling
-
-### 🎬 Export Formats Feature
-
-- **Multi-Platform Support**: Export videos optimized for YouTube Shorts, TikTok, Instagram Reels, and Twitter
-- **Format-Specific Optimization**: Automatic duration, aspect ratio, and content adaptation per platform
-- **Platform Rules**: Built-in optimization strategies for engagement on each platform
-- **Seamless Integration**: Single CLI parameter (`--format`) to generate platform-specific videos
+- **Platform Definitions**: Per-platform constraints (duration, aspect ratio, resolution, max file size) for YouTube Shorts, TikTok, Instagram Reels, and Twitter
+- **Content Adaptation**: Script/scene content is adapted to each platform's constraints
+- **CLI Flag**: The `--format` parameter exists and selects a platform exporter
+- **⚠️ Not Implemented**: The exporters in `media/format_exporters/` are stubs — each returns a hardcoded success result and file size without encoding or writing a video file
 
 ### 🎬 Configurable Video Length Feature
 
@@ -397,21 +311,6 @@ python main_refactored.py analyze-season "Attack on Titan" 1
 python main_refactored.py view-season-summaries --show "My Hero Academia"
 ```
 
-### 🖼️ **Parallel Image Generation Commands**
-
-| Command | Description | Arguments | Flags |
-|---------|-------------|-----------|-------|
-| `test-parallel-images` | Test parallel image generation | `show` `season` `episode` | `--concurrent` `--delay` |
-| `benchmark-parallel` | Benchmark parallel vs sequential | `show` `season` `episode` | `--runs` `--detailed` |
-| `monitor-image-generation` | Monitor image generation metrics | None | `--interval` (default: 5s) |
-
-```bash
-# Examples
-python main_refactored.py test-parallel-images "My Hero Academia" 1 4 --concurrent 5
-python main_refactored.py benchmark-parallel "Attack on Titan" 1 1 --runs 3
-python main_refactored.py monitor-image-generation --interval 10
-```
-
 ### 🎭 **Character Analysis Commands**
 
 | Command | Description | Arguments | Flags |
@@ -536,7 +435,9 @@ python main_refactored.py quality-dashboard
 
 ## 🎬 Export Formats
 
-Generate platform-optimized videos with a single parameter:
+> **⚠️ Status: scaffolded, not implemented.** The `--format` flag below is real and selects a platform exporter, but every exporter in `media/format_exporters/` is a stub: it adapts the content metadata, then returns a hardcoded `{'success': True, 'file_size': ...}` without invoking MoviePy/ffmpeg or writing a platform-specific video file.
+
+Select a target platform with a single parameter:
 
 ```bash
 # Standard format (default) - Full-length MP4
@@ -555,13 +456,14 @@ python main_refactored.py create-season-summary "Show Name" 1 --format instagram
 python main_refactored.py create-season-summary "Show Name" 1 --format twitter
 ```
 
-### Platform-Specific Features
+### Platform-Specific Definitions
 
-- **Content Adaptation**: Automatically condenses content for shorter formats
-- **Aspect Ratio Optimization**: Vertical (9:16) for mobile, horizontal (16:9) for desktop
+These are defined per platform and applied to the content plan. They are **not** applied to a rendered video, because no platform exporter renders one yet.
+
+- **Content Adaptation**: Condenses content for shorter formats
+- **Aspect Ratio**: Vertical (9:16) for mobile, horizontal (16:9) for desktop
 - **Engagement Hooks**: Platform-specific opening strategies and pacing
-- **Duration Constraints**: Respects platform maximum durations
-- **Algorithm Optimization**: Content styled for each platform's recommendation system
+- **Duration Constraints**: Platform maximum durations
 
 ## 📁 Project Structure
 
@@ -953,30 +855,26 @@ A complete YouTube-ready video featuring:
 **Processing Flow**:
 
 ```
-🔍 Transcript Discovery (2-5 seconds)
+🔍 Transcript Discovery
     → Found on transcripts.fandom.com
-    → Quality score: 85%
     
-🤖 AI Content Generation (8-12 seconds)  
+🤖 AI Content Generation
     → Generated 847-word YouTube script
     → Created 6 plot point descriptions
-    → Quality score: 92%
     
-✅ Quality Validation (1-2 seconds)
+✅ Quality Validation
     → All quality gates passed
     → Ready for media generation
     
-🎨 Media Generation (45-90 seconds)
+🎨 Media Generation
     ├── 6 AI-generated scene images
     ├── 3.5-minute narration audio
     └── Adaptive timing calculations
     
-🎥 Video Compilation (15-30 seconds)
+🎥 Video Compilation
     → Final 3.5-minute MP4 video
     → 1080p quality, smooth transitions
 ```
-
-**Total Processing Time**: ~70-140 seconds for complete video
 
 ### **Quality Assurance Throughout**
 
@@ -1375,7 +1273,7 @@ This repository **successfully achieves its stated goals** through:
 - Multi-source transcript discovery across fandom wikis and community databases
 - End-to-end processing from raw HTML to polished MP4 videos
 
-**🔧 Production-Ready Architecture:**
+**🔧 Modular Architecture:**
 
 - Modular agent system with clean separation of concerns
 - Comprehensive error handling and retry mechanisms
@@ -1383,7 +1281,6 @@ This repository **successfully achieves its stated goals** through:
 
 **📊 Measurable Quality:**
 
-- 100% agent success rate across all 9 core components
 - Quality thresholds enforced at each pipeline stage (60-70% minimums)
 - Extensive test suite with comprehensive validation
 
@@ -1392,14 +1289,6 @@ This repository **successfully achieves its stated goals** through:
 - Character analysis with semantic vector search using ChromaDB
 - Season-level processing with comprehensive development tracking
 - Professional media generation (images, voice, video compilation)
-
-## 📈 Performance
-
-- **Agent Load Time:** ~200ms average
-- **Database Connection:** <100ms
-- **AI Model Loading:** ~400ms
-- **Total Startup:** <2 seconds
-- **End-to-End Video Generation:** 70-140 seconds per episode
 
 ## 🔗 Documentation
 
