@@ -1,0 +1,61 @@
+# Keep the build context small. Without this the context is ~2 GB, almost all
+# of it a dead virtualenv and regenerable pipeline output.
+#
+# NOTE: .dockerignore has no inline comments - a trailing "# ..." would become
+# part of the pattern. Every comment here is on its own line.
+
+# ~1.8 GB of stale python3.11 site-packages, unused by anything.
+.venv/
+
+# ~88 MB of generated show output sitting at the repo root, plus its siblings.
+My Hero Academia/
+Another Test Show/
+Message Test Show/
+New Test Show/
+Test Show/
+Unique Test Show/
+
+# Other regenerable / local-only artifacts (~49 MB in data/ alone).
+data/
+vector_db/
+character_db/
+htmlcov/
+notebooks/
+logs/
+demo_output/
+*.log
+
+# Secrets must never reach an image layer.
+.env
+.env.local
+.env.*
+!.env.example
+secrets.json
+api_keys.json
+.secret
+
+# VCS and caches.
+.git/
+.github/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.benchmarks/
+__pycache__/
+*.py[cod]
+.coverage
+.coverage.*
+
+# Editor / OS noise.
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Generated media at any depth. The demo regenerates everything it needs, and
+# its own committed fixtures are plain text, so nothing here excludes them.
+*.mp4
+*.wav
+*.png
+*.jpg
+*.jpeg

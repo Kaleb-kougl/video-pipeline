@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "Canned stand-in for CharacterAnalysisAgent.analyze_episode_characters(), which",
+    "in production opens a persistent ChromaDB store and downloads a",
+    "sentence-transformers embedding model. Same {name: profile} shape the real",
+    "agent returns, so core/character_episode_enhancer.py runs for real against it."
+  ],
+  "profiles": {
+    "Mira Halven": {
+      "importance_score": 0.92,
+      "character_development": 0.85,
+      "screen_time_percentage": 0.42,
+      "personality_traits": ["stubborn", "decisive", "insubordinate"],
+      "character_arc": [
+        {"episode": 1, "growth_score": 0.5},
+        {"episode": 2, "growth_score": 0.65},
+        {"episode": 3, "growth_score": 0.85}
+      ]
+    },
+    "Teo Vask": {
+      "importance_score": 0.78,
+      "character_development": 0.6,
+      "screen_time_percentage": 0.31,
+      "personality_traits": ["precise", "anxious", "loyal"],
+      "character_arc": [
+        {"episode": 1, "growth_score": 0.4},
+        {"episode": 2, "growth_score": 0.55},
+        {"episode": 3, "growth_score": 0.6}
+      ]
+    },
+    "Brigadier Okonne": {
+      "importance_score": 0.55,
+      "character_development": 0.3,
+      "screen_time_percentage": 0.18,
+      "personality_traits": ["dry", "procedural", "protective"],
+      "character_arc": [
+        {"episode": 1, "growth_score": 0.3},
+        {"episode": 3, "growth_score": 0.35}
+      ]
+    }
+  }
+}

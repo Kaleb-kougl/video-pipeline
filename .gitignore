@@ -96,6 +96,9 @@ htmlcov/
 .benchmarks/
 .pytest_cache/
 
+# Offline demo output (`make demo`) - regenerated on every run
+demo_output/
+
 # Generated show output (regenerable pipeline artifacts)
 /My Hero Academia/
 /Test Show/

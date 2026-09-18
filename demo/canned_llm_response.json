@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "Canned stand-in for the structured response Gemini returns from",
+    "WorkflowOrchestrator.generate_structured_summary(). Recorded by hand so the",
+    "demo never needs an API key. Shape must stay in sync with",
+    "core/schemas.py::Episode_Summary_Schema."
+  ],
+  "show": "Neon Lantern Brigade",
+  "season": "1",
+  "episode": "3",
+  "youtube_transcript": "Kesst's 04:52 tram keeps arriving empty even though forty-one people paid to be on it, so the Brigade stops filing rumours and starts riding the loop. Teo works out that the fares belong to residents who left town before the line was ever built, and that the whole anomaly lives inside an eleven minute window. On board, the lantern counts forty-one intentions in an empty car and the windows show a Kesst from nine years ago, which is when Mira realises the tram is not travelling to a place at all. She has Teo cut the lantern, starves the loop of the intention it feeds on, and forty-one commuters step onto the platform nine years late for work. If you want more short, strange transit mysteries, like the video, drop a comment with your favourite line, and subscribe to TLDR Media.",
+  "plot_points": [
+    "The 04:52 tram arrives at Kesst Terminal empty for the third night running despite forty-one paid fares.",
+    "Teo matches every fare to a resident who left Kesst before the tram line was built, turning a rumour into a case.",
+    "Mira and Teo board the loop and the lantern counts forty-one intentions inside an empty carriage.",
+    "The windows show Kesst as it stood nine years earlier and Mira realises the tram travels to a when, not a where.",
+    "Cutting the lantern starves the loop and forty-one commuters step onto the platform nine years late."
+  ]
+}
