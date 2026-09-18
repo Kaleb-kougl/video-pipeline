@@ -32,7 +32,7 @@ Key dependencies:
 The character analysis agent is automatically initialized when ChromaDB dependencies are available:
 
 ```python
-from main_refactored import AnimeVideoGenerator
+from main import AnimeVideoGenerator
 
 generator = AnimeVideoGenerator()
 # Character analysis agent available at generator.character_agent
@@ -50,7 +50,7 @@ Analyze characters in any episode to extract:
 
 ```bash
 # Analyze characters in a specific episode
-python main_refactored.py analyze-characters "My Hero Academia" 1 1
+python main.py analyze-characters "My Hero Academia" 1 1
 ```
 
 Example output:
@@ -77,7 +77,7 @@ Find characters with similar personality traits and dialogue patterns:
 
 ```bash
 # Find characters similar to Izuku
-python main_refactored.py similar-characters "Izuku" --show "My Hero Academia" --limit 5
+python main.py similar-characters "Izuku" --show "My Hero Academia" --limit 5
 ```
 
 The system uses semantic embeddings to compare:
@@ -92,7 +92,7 @@ Track how characters evolve across episodes:
 
 ```bash
 # Analyze character development
-python main_refactored.py character-development "Izuku" "My Hero Academia"
+python main.py character-development "Izuku" "My Hero Academia"
 ```
 
 Development analysis includes:
@@ -123,7 +123,7 @@ Analyze relationships between characters:
 
 ```bash
 # Get relationship map for a character
-python main_refactored.py character-relationships "Izuku" --show "My Hero Academia"
+python main.py character-relationships "Izuku" --show "My Hero Academia"
 ```
 
 Relationship analysis includes:
@@ -158,7 +158,7 @@ Search for specific character moments using natural language:
 
 ```bash
 # Search for character moments
-python main_refactored.py search-character-moments "heroic determination" --limit 10
+python main.py search-character-moments "heroic determination" --limit 10
 ```
 
 Search capabilities:
@@ -188,7 +188,7 @@ Get overview of the character analysis database:
 
 ```bash
 # Show character database statistics
-python main_refactored.py character-stats
+python main.py character-stats
 ```
 
 Statistics include:
@@ -218,9 +218,22 @@ The character analysis system uses three ChromaDB collections:
    - Stores episode-by-episode trait evolution
    - Enables development arc analysis
 
+All three collections are shared across shows, so every write must carry show
+identity. Build entry metadata through `BaseMetadata.create()` in
+`core/metadata_schemas.py`, which canonicalizes the show name via
+`core/show_registry.py` and derives `episode_key` as
+`{show_id}_S{season}E{episode}`. Calling the analysis methods without a show
+name raises `ValueError: show_name is required to prevent cross-show
+contamination` rather than writing an unattributable row.
+
 ### Embedding Strategy
 
 Characters are embedded using a multi-faceted approach:
+
+Embeddings are produced by the `all-MiniLM-L6-v2` sentence-transformer
+(`agents/character_analysis_agent.py`). If `sentence-transformers` is not
+installed the agent logs a warning and disables embeddings; the CLI commands
+below then return nothing rather than failing.
 
 - **Dialogue Embeddings**: Semantic representation of character speech
 - **Personality Embeddings**: Trait-based character representation
@@ -415,33 +428,6 @@ The system is designed to scale with your anime database:
 - **Disk Space**: ChromaDB creates persistent storage for embeddings
 - **Memory**: Sentence transformers use GPU if available
 - **CPU**: Character analysis is CPU-intensive for large datasets
-
-## 🔮 Future Enhancements
-
-### Planned Features
-
-- **Visual Relationship Graphs**: Interactive character network visualization
-- **Character Voice Analysis**: Analyze speech patterns and vocabulary
-- **Emotional Journey Tracking**: Track emotional states across episodes  
-- **Character Archetype Classification**: Automatic character type detection
-- **Cross-Cultural Analysis**: Compare character types across different cultures
-
-### Integration Opportunities
-
-- **Video Scene Analysis**: Connect character moments to video timestamps
-- **Fan Community Integration**: Incorporate fan discussions and theories
-- **Recommendation Systems**: Suggest episodes based on character preferences
-- **Educational Tools**: Character analysis for literature and media studies
-
-## 📝 Contributing
-
-To contribute to character analysis development:
-
-1. **Feature Requests**: Suggest new analysis capabilities
-2. **Trait Expansion**: Add new personality traits and keywords
-3. **Model Improvements**: Enhance embedding and classification models
-4. **Testing**: Help test with different anime series and edge cases
-5. **Documentation**: Improve examples and use case documentation
 
 ## 🐛 Troubleshooting
 

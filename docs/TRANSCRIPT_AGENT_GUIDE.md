@@ -48,8 +48,14 @@ The `TranscriptDiscoveryAgent` is a powerful tool that automatically searches mu
 
 ### Simple Episode Search
 
+`find_episode_transcript()` is marked **deprecated** in the source: it fuses
+discovery and parsing into one call. New code should use the two-step form —
+`EpisodeDiscoveryAgent.search_episode_enhanced()` to find a URL, then
+`TranscriptDiscoveryAgent.parse_discovered_url(url, source_name)` to parse it.
+The single-call form below still works and is what the CLI uses.
+
 ```python
-from main import TranscriptDiscoveryAgent
+from agents.transcript_agent import TranscriptDiscoveryAgent
 
 # Initialize the agent
 agent = TranscriptDiscoveryAgent()
@@ -77,19 +83,24 @@ else:
 
 ### Batch Processing with the Orchestrator
 
+`WorkflowOrchestrator.process_episode_complete()` is a coroutine and takes the
+show name first. It returns a `ProcessingResult` (`core/schemas.py`), not a
+plain dict.
+
 ```python
-from main import WorkflowOrchestrator
+import asyncio
+from agents.workflow_orchestrator import WorkflowOrchestrator
 
 # Initialize the complete system
 orchestrator = WorkflowOrchestrator()
 
 # Process a single episode (includes transcript discovery + AI processing)
-result = orchestrator.process_episode_by_numbers(
-    season=1, 
-    episode=4, 
+result = asyncio.run(orchestrator.process_episode_complete(
+    show_name="Attack on Titan",
+    season=1,
+    episode=4,
     episode_title="Start Line",
-    show_name="Attack on Titan"
-)
+))
 
 if result['success']:
     episode_data = result['data']
@@ -186,13 +197,13 @@ except Exception as e:
 
 ```bash
 # Test a single episode
-python test_transcript_agent.py --mode single
+python tests/test_transcript_agent.py --mode single
 
 # Run batch tests on multiple shows
-python test_transcript_agent.py --mode batch
+python tests/test_transcript_agent.py --mode batch
 
 # Show all supported anime shows
-python test_transcript_agent.py --mode shows
+python tests/test_transcript_agent.py --mode shows
 ```
 
 ### Custom Tests
@@ -216,16 +227,16 @@ for show, season, episode, title in test_cases:
 
 ```bash
 # Test URL generation for complex show names
-python test_complex_shows.py --mode generation
+python tests/test_complex_shows.py --mode generation
 
 # Test dynamic pattern discovery
-python test_complex_shows.py --mode discovery  
+python tests/test_complex_shows.py --mode discovery  
 
 # Test actual searches (limited to be respectful)
-python test_complex_shows.py --mode search
+python tests/test_complex_shows.py --mode search
 
 # Run all tests
-python test_complex_shows.py --mode all
+python tests/test_complex_shows.py --mode all
 ```
 
 ### Examples of Complex Shows Handled

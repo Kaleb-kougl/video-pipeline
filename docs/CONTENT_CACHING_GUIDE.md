@@ -1,12 +1,21 @@
 # Content Caching System Guide
 
-**Implementation Date:** August 2025  
-**Status:** Production Ready  
-**Test Coverage:** 96% (25/26 tests passing)
+Covered by `tests/unit/test_content_cache.py`.
 
 ## Overview
 
-The Content Caching System is a sophisticated caching layer designed to reduce API costs by **40%** and improve performance in the anime video generation pipeline through intelligent content reuse, similarity detection, and cross-episode optimization.
+`core/content_cache.py` is an in-process caching layer that lets the pipeline
+reuse generated content instead of re-requesting it: text summaries, character
+analyses, and image-generation results. It combines exact-hash lookup with
+similarity matching, so near-identical prompts across different episodes can hit
+the same cached entry.
+
+The cache is a standalone, working component. Its high-level
+`get_or_generate_image()` helper is generator-agnostic and **no generator in this
+repository implements the required protocol yet** — see
+[Image generator integration](#1-image-generator-integration). Cost and
+speed savings therefore depend on wiring a generator in; the figures below are
+not measured results for this repository.
 
 ## Architecture
 
@@ -249,9 +258,15 @@ retrieved = cache.get_cached_content(character_hash, ContentType.CHARACTER_ANALY
 
 Cache platform-specific adaptations:
 
+`IntelligentFormatAdapter` exposes `adapt_content_for_platform()` and
+`batch_adapt_for_platforms()` — both coroutines. There is no `adapt_for_tiktok()`
+method.
+
 ```python
-# Cache TikTok-optimized content
-tiktok_content = format_adapter.adapt_for_tiktok(original_content)
+# Cache platform-optimized content
+tiktok_content = await format_adapter.adapt_content_for_platform(
+    original_content, platform="tiktok"
+)
 cache.cache_content(tiktok_hash, tiktok_content, ContentType.TEXT)
 
 # Reuse for similar episodes
