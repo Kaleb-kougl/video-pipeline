@@ -137,16 +137,7 @@ indent-style = "space"
 # can import the first-party packages, so imports cannot be at the top.
 # FOLLOW-UP: drop the bootstrap once the project is always installed (`pip
 # install -e .`) and these ignores go away.
-"main.py" = [
-    "E402",
-    # FOLLOW-UP - REAL BUG, not a style nit: AnimeVideoGenerator defines
-    # analyze_episode_quality (477 + 542), discover_show_episodes (501 + 568)
-    # and generate_content_summary (518 + 582) twice each. Python keeps the
-    # second definition, so the first of each pair is dead code. Deleting the
-    # dead halves is a behaviour-preserving change but not a mechanical one,
-    # so it is left for a dedicated cleanup.
-    "F811",
-]
+"main.py" = ["E402"]
 "demos/*" = ["E402"]
 "scripts/*" = ["E402"]
 

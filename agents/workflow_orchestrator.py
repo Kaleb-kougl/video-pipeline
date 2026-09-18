@@ -115,15 +115,18 @@ class WorkflowOrchestrator:
             logger.info("Generating AI summary")
             summary_result = self.generate_structured_summary(content_result, show_name)
 
-            # Step 3: Validate the generated content for quality and coherence
-            # Ensure the content meets standards before proceeding to media generation
-            logger.info("Validating content quality")
-            # BUG: the result is computed and then dropped, so this gate does
-            # not actually gate. See docs/portfolio-refinement.md.
-            # TODO: act on the score, or remove the call.
-            _quality_check = self.qa_agent.validate_content(
-                summary_result["youtube_transcript"], summary_result["plot_points"]
-            )
+            # Step 3: (no content quality gate - see note below)
+            # There used to be a `qa_agent.validate_content(...)` call here whose
+            # result was discarded, so it read like a gate but gated nothing.
+            # It is gone rather than wired up, because its score is not gateable:
+            # at this point the pipeline has only a summary and plot points, so
+            # the legacy shim fabricates a payload with empty `characters`,
+            # `dialogue` and `visual_elements`. Those carry 50% of the content
+            # score's weight, so even good output lands near 0.60 against a 0.70
+            # *critical* `content_generation` gate - turning it on would abort
+            # every run. See the warning on QualityAssuranceAgent.validate_content.
+            # Real validation runs post-hoc over full stage data via
+            # QualityCoordinator.validate_complete_workflow().
 
             # Step 4: Save the processed data to the database for persistence
             # Store all generated content for future reference and reprocessing
@@ -428,14 +431,11 @@ class WorkflowOrchestrator:
             summary_result["episode"] = str(episode)
             summary_result["show"] = show_name
 
-            # Step 4: Quality validation
-            logger.info("Validating content quality...")
-            # BUG: the result is computed and then dropped, so this gate does
-            # not actually gate. See docs/portfolio-refinement.md.
-            # TODO: act on the score, or remove the call.
-            _quality_check = self.qa_agent.validate_content(
-                summary_result["youtube_transcript"], summary_result["plot_points"]
-            )
+            # Step 4: (no content quality gate - the discarded
+            # `qa_agent.validate_content(...)` call that used to sit here was
+            # removed; its score is not gateable. See the warning on
+            # QualityAssuranceAgent.validate_content and the note in
+            # process_episode_workflow.)
 
             # Step 5: Save to database
             db_instance = db or self.db
@@ -499,14 +499,11 @@ class WorkflowOrchestrator:
             logger.info("Generating AI summary...")
             summary_result = self.generate_structured_summary(content_result, show_name)
 
-            # Step 3: Quality validation
-            logger.info("Validating content quality...")
-            # BUG: the result is computed and then dropped, so this gate does
-            # not actually gate. See docs/portfolio-refinement.md.
-            # TODO: act on the score, or remove the call.
-            _quality_check = self.qa_agent.validate_content(
-                summary_result["youtube_transcript"], summary_result["plot_points"]
-            )
+            # Step 3: (no content quality gate - the discarded
+            # `qa_agent.validate_content(...)` call that used to sit here was
+            # removed; its score is not gateable. See the warning on
+            # QualityAssuranceAgent.validate_content and the note in
+            # process_episode_workflow.)
 
             # Step 4: Save to database
             db_instance = db or self.db

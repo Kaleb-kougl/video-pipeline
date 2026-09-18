@@ -493,71 +493,6 @@ class AnimeVideoGenerator:
         """Get processing statistics."""
         return self.db.get_processing_stats()
 
-    def analyze_episode_quality(self, show_name: str, season: int, episode: int):
-        """
-        Analyze the quality of a processed episode.
-
-        Args:
-            show_name (str): The name of the show
-            season (int): Season number
-            episode (int): Episode number
-        """
-        try:
-            # Get episode data from database
-            episode_data = self.db.get_episode(show_name, season, episode)
-            if not episode_data:
-                logger.error(f"Episode not found in database: {show_name} S{season}E{episode}")
-                return None
-
-            # Use quality agent to analyze
-            quality_report = self.quality_agent.analyze_episode_quality(episode_data)
-            return quality_report
-
-        except Exception as e:
-            logger.error(f"Quality analysis failed: {e}")
-            return None
-
-    def discover_show_episodes(self, show_name: str, season: int = None):
-        """
-        Discover available episodes for a show using the discovery agent.
-
-        Args:
-            show_name (str): The name of the show
-            season (int, optional): Specific season to discover
-        """
-        try:
-            episodes = self.discovery_agent.discover_show_episodes(show_name, season)
-            logger.info(f"Discovered {len(episodes)} episodes for {show_name}")
-            return episodes
-
-        except Exception as e:
-            logger.error(f"Episode discovery failed: {e}")
-            return []
-
-    def generate_content_summary(self, show_name: str, season: int, episode: int):
-        """
-        Generate AI content summary for an episode.
-
-        Args:
-            show_name (str): The name of the show
-            season (int): Season number
-            episode (int): Episode number
-        """
-        try:
-            # Get episode data from database
-            episode_data = self.db.get_episode(show_name, season, episode)
-            if not episode_data:
-                logger.error(f"Episode not found in database: {show_name} S{season}E{episode}")
-                return None
-
-            # Use content agent to generate summary
-            summary = self.content_agent.generate_content_summary(episode_data["transcript"])
-            return summary
-
-        except Exception as e:
-            logger.error(f"Content summary generation failed: {e}")
-            return None
-
     def analyze_episode_quality(self, show_name: str, season: int, episode: int) -> dict:
         """Analyze episode quality across all stages."""
         try:
@@ -608,12 +543,19 @@ class AnimeVideoGenerator:
                 logger.warning(f"No transcript data found for {show_name} S{season}E{episode}")
                 return None
 
-            # Generate summary using content agent
-            summary = self.content_agent.generate_episode_summary(
-                episode_data["transcript"], show_name, season, episode
+            # Generate the summary through the orchestrator. ContentAgent has no
+            # transcript-to-summary method -- it only exposes extract_and_analyze(url) --
+            # so the call that used to be here (content_agent.generate_episode_summary)
+            # raised AttributeError into the handler below and returned None on every
+            # invocation, making `summarize` silently do nothing.
+            result = self.orchestrator.generate_structured_summary(
+                {"transcript": episode_data["transcript"]}, show_name
             )
+            if not result:
+                logger.warning(f"Summary generation returned nothing for {show_name}")
+                return None
 
-            return summary
+            return result.get("youtube_transcript")
 
         except Exception as e:
             logger.error(
@@ -875,18 +817,25 @@ class AnimeVideoGenerator:
             String containing the formatted summary
         """
         try:
-            # Use length-adaptive prompt
-            _length_prompt = self._generate_length_adaptive_prompt(
+            if not self.content_agent or not self.model:
+                # No AI model available - the length-adaptive prompt is useless
+                # without one, so fall back to the deterministic basic summary.
+                return self._generate_basic_season_summary(show_name, season, season_analysis)
+
+            # Build the prompt whose section timings are scaled to target_minutes
+            length_prompt = self._generate_length_adaptive_prompt(
                 show_name, season, season_analysis, target_minutes
             )
 
-            # Continue with existing summary generation logic using the adaptive prompt
-            # For now, fallback to existing method
-            return self._generate_season_summary(show_name, season, season_analysis)
+            # Actually use it. Previously this result was discarded and the
+            # fixed 5-minute prompt from _generate_season_summary was used
+            # instead, which silently ignored target_minutes.
+            response = self.model.invoke(length_prompt)
+            return response.content if hasattr(response, "content") else str(response)
 
         except Exception as e:
             logger.error(f"Length-adaptive summary generation failed: {e}")
-            # Fallback to existing method
+            # Fallback to the fixed-length summary generator
             return self._generate_season_summary(show_name, season, season_analysis)
 
     def _generate_season_summary(self, show_name: str, season: int, season_analysis: dict) -> str:
@@ -1087,6 +1036,52 @@ class AnimeVideoGenerator:
             "transition_time": 0.5,
         }
 
+    @staticmethod
+    def _format_season_analysis_for_prompt(season_analysis: dict) -> str:
+        """
+        Render season analysis data as a prompt block.
+
+        Tolerates partial or empty analysis data: any section that is missing
+        is simply reported as unknown rather than raising, so prompt building
+        never fails on incomplete input.
+
+        Args:
+            season_analysis: Analysis data from analyze_season_development
+
+        Returns:
+            An indented, human-readable block for embedding in an AI prompt
+        """
+        analysis = season_analysis or {}
+
+        def names(section: str, key: str) -> str:
+            """Join the first element of each (name, score) pair in a section."""
+            pairs = analysis.get(section, {}).get(key, []) or []
+            labels = [str(pair[0]) for pair in pairs if pair]
+            return ", ".join(labels) if labels else "unknown"
+
+        def value(section: str, key: str) -> str:
+            found = analysis.get(section, {}).get(key)
+            return "unknown" if found is None else str(found)
+
+        return f"""        SEASON OVERVIEW:
+        - Total Episodes: {value("season_info", "total_episodes")}
+        - Episode Range: {value("season_info", "episode_range")}
+
+        CHARACTER DEVELOPMENT:
+        - Total Characters: {value("character_insights", "total_characters")}
+        - Top Developing Characters: {names("character_insights", "top_developing_characters")}
+
+        STORY ELEMENTS:
+        - Pivotal Moments: {value("story_insights", "pivotal_moments_count")}
+        - Dominant Themes: {names("story_insights", "dominant_themes")}
+        - Narrative Arcs: {value("story_insights", "narrative_arcs")}
+
+        RELATIONSHIPS:
+        - Key Relationships: {names("relationship_insights", "strongest_relationships")}
+
+        SIGNIFICANT EPISODES:
+        - Most Important: {names("episode_analysis", "most_significant_episodes")}"""
+
     def _generate_length_adaptive_prompt(
         self, show_name: str, season: int, season_analysis: dict, target_minutes: int
     ) -> str:
@@ -1108,10 +1103,10 @@ class AnimeVideoGenerator:
         prompt = f"""
         Create a comprehensive {target_minutes}-minute chronological summary of {show_name} Season {season}.
         This summary will be used to create a video, so structure it with clear narrative flow.
-        
+
         Based on the following analysis data:
-        [Analysis data insertion here...]
-        
+{self._format_season_analysis_for_prompt(season_analysis)}
+
         Please structure the summary with the following timing:
         """
 

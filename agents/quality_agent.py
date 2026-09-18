@@ -138,6 +138,21 @@ class QualityAssuranceAgent:
         """
         Legacy method for backward compatibility.
 
+        .. warning::
+            **This score must not be used as a quality gate.** The method only
+            receives a summary string and a list of plot points, so it has to
+            invent a content payload whose ``characters``, ``dialogue`` and
+            ``visual_elements`` sections are *always* empty. Those three
+            sections carry 50% of :class:`ContentQualityAgent`'s weight and
+            also trip the "missing required sections" coherence penalty, so
+            even well-formed input tops out around ``quality_score`` 6/10
+            (0.60) - below the 0.70 ``content_generation`` gate defined in
+            :class:`QualityCoordinator`. The number therefore measures the
+            shape of this shim, not the quality of the content.
+
+            For real gating use :meth:`validate_content_quality` with a fully
+            populated payload, or :meth:`validate_complete_workflow`.
+
         Args:
             summary: Episode summary
             plot_points: List of plot points

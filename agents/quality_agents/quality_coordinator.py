@@ -223,12 +223,13 @@ class QualityCoordinator:
         else:
             overall_score = 0
 
-        # Identify critical issues
-        critical_issues = [issue for issue in all_issues if issue.startswith("CRITICAL:")]
-
         # Remove duplicates while preserving order
-        _unique_issues = list(dict.fromkeys(all_issues))
+        unique_issues = list(dict.fromkeys(all_issues))
         unique_recommendations = list(dict.fromkeys(all_recommendations))
+
+        # Identify critical issues (from the deduplicated list, so the same
+        # issue reported by several stages is only listed once)
+        critical_issues = [issue for issue in unique_issues if issue.startswith("CRITICAL:")]
 
         # Analyze quality trends
         quality_trends = self._analyze_quality_trends(stage_scores)
