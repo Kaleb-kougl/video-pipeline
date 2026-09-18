@@ -47,6 +47,11 @@ class BaseExporter(ABC):
             
         Returns:
             Dictionary containing export results, file paths, and status information
+
+        Raises:
+            NotImplementedError: If the subclass can adapt the content but cannot
+                actually render/write a video file. Callers must handle this and
+                must not record a successful export.
         """
         pass
         

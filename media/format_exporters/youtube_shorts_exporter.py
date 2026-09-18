@@ -30,43 +30,37 @@ class YouTubeShortsExporter(BaseExporter):
         }
         
     def export_video(self, video_content: Dict[str, Any]) -> Dict[str, Any]:
-        """Export video in YouTube Shorts format."""
-        try:
-            # Get format constraints
-            constraints = self.get_format_constraints()
-            
-            # Adapt content for short format
-            adapted_content = self.adapt_content_for_format(video_content)
-            
-            # Generate output filename
-            show_name = video_content.get('show_name', 'Unknown')
-            season = video_content.get('season', 1)
-            
-            # Create safe filename
-            safe_show = show_name.replace(' ', '_').replace('/', '_')
-            output_filename = f"{safe_show}_S{season}_youtube_shorts.mp4"
-            
-            # For now, simulate the export process
-            # In real implementation, this would use MoviePy with vertical aspect ratio
-            result = {
-                'success': True,
-                'duration': adapted_content['estimated_duration'],
-                'aspect_ratio': '9:16',
-                'output_path': output_filename,
-                'format': 'youtube_shorts',
-                'file_size': 8 * 1024 * 1024,  # Simulated file size
-            }
-            
-            logger.info(f"YouTube Shorts export completed: {output_filename}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"YouTube Shorts export failed: {e}")
-            return {
-                'success': False,
-                'error': str(e),
-                'output_path': None
-            }
+        """
+        Export video in YouTube Shorts format.
+
+        Raises:
+            NotImplementedError: Always. Rendering the video file is not
+                implemented; only the content adaptation below is real.
+        """
+        # Get format constraints
+        constraints = self.get_format_constraints()
+
+        # Adapt content for short format
+        adapted_content = self.adapt_content_for_format(video_content)
+
+        # Generate output filename
+        show_name = video_content.get('show_name', 'Unknown')
+        season = video_content.get('season', 1)
+
+        # Create safe filename
+        safe_show = show_name.replace(' ', '_').replace('/', '_')
+        output_filename = f"{safe_show}_S{season}_youtube_shorts.mp4"
+
+        raise NotImplementedError(
+            f"YouTube Shorts video export is not implemented: no file was written for "
+            f"'{output_filename}'. Producing it requires a MoviePy re-render of the source "
+            f"clips at a {constraints['aspect_ratio']} aspect ratio "
+            f"({constraints['min_resolution'][0]}x{constraints['min_resolution'][1]}), the "
+            f"timeline capped at {constraints['max_duration']}s (adapted duration would be "
+            f"{adapted_content['estimated_duration']}s), and an ffmpeg encode kept under the "
+            f"{constraints['max_file_size'] // (1024 * 1024)}MB limit. "
+            f"Content adaptation succeeded; only the render step is missing."
+        )
             
     def adapt_content_for_format(self, video_content: Dict[str, Any]) -> Dict[str, Any]:
         """Adapt content for YouTube Shorts requirements."""

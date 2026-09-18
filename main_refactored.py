@@ -391,14 +391,27 @@ class AnimeVideoGenerator:
             
             # Step 10.5: Export in specified format if not standard
             export_result = self.export_video_format(show_name, season, visual_concepts, audio_file, export_format)
-            
+
+            export_skipped = export_result.get('status') == 'skipped_not_implemented'
+            if export_skipped:
+                logger.warning(
+                    f"⚠️ Platform export '{export_format}' was skipped: it is not implemented, "
+                    f"so no {export_format} file exists. Only the standard MP4 was produced."
+                )
+                print(
+                    f"⚠️  {export_format} export SKIPPED - platform export is not implemented. "
+                    f"No {export_format} file was created; the standard MP4 is available."
+                )
+
             # Step 11: Store media file information in database
+            # Never persist an export record that claims a file exists when it does not.
             media_files = {
                 "audio_file": audio_file,
                 "video_file": video_file,
                 "image_count": len(visual_concepts),
                 "youtube_transcript": youtube_transcript,
-                "export_format": export_format,
+                "export_format": "standard" if export_skipped else export_format,
+                "requested_export_format": export_format,
                 "export_result": export_result
             }
             
@@ -1263,7 +1276,10 @@ class AnimeVideoGenerator:
             export_format: Target export format
             
         Returns:
-            Dict with export results
+            Dict with export results. Platform exports are not implemented, so
+            for any non-standard format this returns a dict with
+            ``success=False`` and ``status='skipped_not_implemented'`` rather
+            than raising or claiming a file was produced.
         """
         if export_format == 'standard':
             return {'format': 'standard', 'message': 'Standard MP4 format used'}
@@ -1288,17 +1304,31 @@ class AnimeVideoGenerator:
             
             exporter = exporters.get(export_format)
             if not exporter:
-                return {'error': f'Unknown export format: {export_format}'}
+                return {'success': False, 'error': f'Unknown export format: {export_format}'}
                 
             # Export in specified format
             result = exporter.export_video(video_content)
-            
+
             logger.info(f"Export format {export_format} completed: {result}")
             return result
-            
+
+        except NotImplementedError as e:
+            # Platform export is a known gap, not a crash: report it honestly and
+            # let the pipeline continue with the standard MP4 only.
+            logger.warning(
+                f"Export format '{export_format}' skipped - not implemented: {e}"
+            )
+            return {
+                'format': export_format,
+                'success': False,
+                'status': 'skipped_not_implemented',
+                'output_path': None,
+                'error': str(e)
+            }
+
         except Exception as e:
             logger.error(f"Failed to export in format {export_format}: {e}")
-            return {'error': str(e)}
+            return {'format': export_format, 'success': False, 'error': str(e)}
     
     def validate_stage_quality(self, show_name: str, season: int, episode: int, stage: str) -> Dict:
         """Validate quality for a specific workflow stage."""

@@ -28,35 +28,33 @@ class TwitterVideoExporter(BaseExporter):
         }
         
     def export_video(self, video_content: Dict[str, Any]) -> Dict[str, Any]:
-        """Export video in Twitter format."""
-        try:
-            adapted_content = self.adapt_content_for_format(video_content)
-            
-            show_name = video_content.get('show_name', 'Unknown')
-            season = video_content.get('season', 1)
-            
-            safe_show = show_name.replace(' ', '_').replace('/', '_')
-            output_filename = f"{safe_show}_S{season}_twitter.mp4"
-            
-            result = {
-                'success': True,
-                'duration': adapted_content['estimated_duration'],
-                'aspect_ratio': '16:9',
-                'output_path': output_filename,
-                'format': 'twitter',
-                'file_size': 25 * 1024 * 1024,  # Simulated file size
-            }
-            
-            logger.info(f"Twitter export completed: {output_filename}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Twitter export failed: {e}")
-            return {
-                'success': False,
-                'error': str(e),
-                'output_path': None
-            }
+        """
+        Export video in Twitter format.
+
+        Raises:
+            NotImplementedError: Always. Rendering the video file is not
+                implemented; only the content adaptation below is real.
+        """
+        constraints = self.get_format_constraints()
+
+        adapted_content = self.adapt_content_for_format(video_content)
+
+        show_name = video_content.get('show_name', 'Unknown')
+        season = video_content.get('season', 1)
+
+        safe_show = show_name.replace(' ', '_').replace('/', '_')
+        output_filename = f"{safe_show}_S{season}_twitter.mp4"
+
+        raise NotImplementedError(
+            f"Twitter video export is not implemented: no file was written for "
+            f"'{output_filename}'. Producing it requires a MoviePy re-render of the source "
+            f"clips at a {constraints['aspect_ratio']} aspect ratio "
+            f"({constraints['min_resolution'][0]}x{constraints['min_resolution'][1]}), the "
+            f"timeline capped at {constraints['max_duration']}s (adapted duration would be "
+            f"{adapted_content['estimated_duration']}s), and an ffmpeg encode kept under the "
+            f"{constraints['max_file_size'] // (1024 * 1024)}MB limit. "
+            f"Content adaptation succeeded; only the render step is missing."
+        )
             
     def adapt_content_for_format(self, video_content: Dict[str, Any]) -> Dict[str, Any]:
         """Adapt content for Twitter requirements."""

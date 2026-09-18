@@ -38,35 +38,33 @@ class InstagramReelsExporter(BaseExporter):
         }
         
     def export_video(self, video_content: Dict[str, Any]) -> Dict[str, Any]:
-        """Export video in Instagram Reels format."""
-        try:
-            adapted_content = self.adapt_content_for_format(video_content)
-            
-            show_name = video_content.get('show_name', 'Unknown')
-            season = video_content.get('season', 1)
-            
-            safe_show = show_name.replace(' ', '_').replace('/', '_')
-            output_filename = f"{safe_show}_S{season}_instagram_reels.mp4"
-            
-            result = {
-                'success': True,
-                'duration': adapted_content['estimated_duration'],
-                'aspect_ratio': '9:16',
-                'output_path': output_filename,
-                'format': 'instagram_reels',
-                'file_size': 15 * 1024 * 1024,  # Simulated file size
-            }
-            
-            logger.info(f"Instagram Reels export completed: {output_filename}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Instagram Reels export failed: {e}")
-            return {
-                'success': False,
-                'error': str(e),
-                'output_path': None
-            }
+        """
+        Export video in Instagram Reels format.
+
+        Raises:
+            NotImplementedError: Always. Rendering the video file is not
+                implemented; only the content adaptation below is real.
+        """
+        constraints = self.get_format_constraints()
+
+        adapted_content = self.adapt_content_for_format(video_content)
+
+        show_name = video_content.get('show_name', 'Unknown')
+        season = video_content.get('season', 1)
+
+        safe_show = show_name.replace(' ', '_').replace('/', '_')
+        output_filename = f"{safe_show}_S{season}_instagram_reels.mp4"
+
+        raise NotImplementedError(
+            f"Instagram Reels video export is not implemented: no file was written for "
+            f"'{output_filename}'. Producing it requires a MoviePy re-render of the source "
+            f"clips at a {constraints['aspect_ratio']} aspect ratio "
+            f"({constraints['min_resolution'][0]}x{constraints['min_resolution'][1]}), the "
+            f"timeline capped at {constraints['max_duration']}s (adapted duration would be "
+            f"{adapted_content['estimated_duration']}s), and an ffmpeg encode kept under the "
+            f"{constraints['max_file_size'] // (1024 * 1024)}MB limit. "
+            f"Content adaptation succeeded; only the render step is missing."
+        )
             
     def adapt_content_for_format(self, video_content: Dict[str, Any]) -> Dict[str, Any]:
         """Adapt content for Instagram Reels requirements."""
