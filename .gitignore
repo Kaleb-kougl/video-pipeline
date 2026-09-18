@@ -1,0 +1,105 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environment variables
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Logs
+logs/*.log
+*.log
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project specific
+data/databases/
+logs/
+gemini-native-image.png
+character_db/
+vector_db/
+
+# Media files (optional - depends on if you want to track generated content)
+*.mp4
+*.wav
+*.png
+*.jpg
+*.jpeg
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# API keys and secrets
+secrets.json
+api_keys.json
+.secret
+
+# Coverage and test artifacts
+htmlcov/
+.coverage
+.coverage.*
+.benchmarks/
+.pytest_cache/
+
+# Generated show output (regenerable pipeline artifacts)
+/My Hero Academia/
+/Test Show/
+/Another Test Show/
+/New Test Show/
+/Message Test Show/
+/Unique Test Show/

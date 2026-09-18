@@ -1,0 +1,34 @@
+{
+  "profiles": {
+    "Naruto": {
+      "importance_score": 0.9,
+      "character_development": 0.8,
+      "screen_time_percentage": 0.4,
+      "personality_traits": ["determined", "kind", "brave"],
+      "character_arc": [
+        {"episode": 1, "growth_score": 0.7},
+        {"episode": 2, "growth_score": 0.8}
+      ]
+    },
+    "Sasuke": {
+      "importance_score": 0.85,
+      "character_development": 0.9,
+      "screen_time_percentage": 0.3,
+      "personality_traits": ["intelligent", "stubborn", "confident"],
+      "character_arc": [
+        {"episode": 1, "growth_score": 0.6},
+        {"episode": 2, "growth_score": 0.9}
+      ]
+    },
+    "Sakura": {
+      "importance_score": 0.6,
+      "character_development": 0.5,
+      "screen_time_percentage": 0.15,
+      "personality_traits": ["kind", "determined", "anxious"],
+      "character_arc": [
+        {"episode": 1, "growth_score": 0.4},
+        {"episode": 2, "growth_score": 0.5}
+      ]
+    }
+  }
+}

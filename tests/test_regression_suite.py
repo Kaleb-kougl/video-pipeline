@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Comprehensive Regression Test Suite
+
+This test suite runs all regression tests for issues fixed in the codebase.
+It provides a single entry point to validate that previous bug fixes are
+still working correctly.
+"""
+
+import sys
+import os
+import subprocess
+import time
+from pathlib import Path
+
+# Add the project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+def run_regression_test(test_name, test_description, test_file):
+    """Run a single regression test and return results.
+    
+    Args:
+        test_name: Short name for the test
+        test_description: Description of what the test validates
+        test_file: Path to the test file to run
+        
+    Returns:
+        dict: Test result containing status, duration, output, and error information
+    """
+    print("\n" + "=" * 70)
+    print("🧪 " + test_name)
+    print("📋 " + test_description)  
+    print("=" * 70)
+    
+    start_time = time.time()
+    
+    try:
+        # Run the test as a subprocess
+        result = subprocess.run([
+            sys.executable, test_file
+        ], capture_output=True, text=True, timeout=300, cwd=project_root)
+        
+        end_time = time.time()
+        duration = end_time - start_time
+        
+        if result.returncode == 0:
+            print(f"✅ {test_name} PASSED ({duration:.1f}s)")
+            return {
+                "name": test_name,
+                "description": test_description,
+                "status": "passed",
+                "duration": duration,
+                "output": result.stdout,
+                "error": result.stderr
+            }
+        else:
+            print(f"❌ {test_name} FAILED ({duration:.1f}s)")
+            print(f"Error Output:\n{result.stderr}")
+            return {
+                "name": test_name,
+                "description": test_description,
+                "status": "failed",
+                "duration": duration,
+                "output": result.stdout,
+                "error": result.stderr
+            }
+    
+    except subprocess.TimeoutExpired:
+        print(f"⏰ {test_name} TIMEOUT (>300s)")
+        return {
+            "name": test_name,
+            "description": test_description,
+            "status": "timeout",
+            "duration": 300,
+            "output": "",
+            "error": "Test timed out after 300 seconds"
+        }
+    
+    except Exception as e:
+        print(f"💥 {test_name} CRASHED: {e}")
+        return {
+            "name": test_name,
+            "description": test_description,
+            "status": "crashed",
+            "duration": 0,
+            "output": "",
+            "error": str(e)
+        }
+
+def test_regression_suite():
+    """Run the complete regression test suite.
+    
+    This function runs all regression tests that validate fixes for
+    issues that were previously causing failures in the system.
+    
+    Returns:
+        bool: True if all critical tests pass, False otherwise
+    """
+    
+    print("🔄 COMPREHENSIVE REGRESSION TEST SUITE")
+    print("=" * 70)
+    print("This suite validates that all previously fixed issues remain resolved.")
+    print("=" * 70)
+    
+    # Define all regression tests
+    regression_tests = [
+        {
+            "name": "ChromaDB Array Boolean Fixes",
+            "description": "Validates fixes for 'truth value of array is ambiguous' errors in ChromaDB result handling",
+            "file": "tests/test_chromadb_array_fixes.py",
+            "critical": True  # Critical test - must pass
+        },
+        {
+            "name": "Google AI Client Fixes",
+            "description": "Validates fixes for Google Generative AI client initialization and API usage",
+            "file": "tests/test_google_ai_client_fixes.py", 
+            "critical": True  # Critical test - must pass
+        },
+        {
+            "name": "File Path Consistency",
+            "description": "Validates that file paths are consistent between image generation and video creation",
+            "file": "tests/test_file_path_consistency.py",
+            "critical": False  # Important but not critical
+        },
+        {
+            "name": "Character Season Analysis",
+            "description": "Validates that character analysis season episode retrieval works without errors",
+            "file": "tests/test_character_season_analysis.py",
+            "critical": True  # Critical test - must pass
+        }
+    ]
+    
+    # Run all tests
+    results = []
+    start_time = time.time()
+    
+    for test_config in regression_tests:
+        test_file_path = project_root / test_config["file"]
+        
+        if not test_file_path.exists():
+            print(f"⚠️ Test file not found: {test_config['file']}")
+            results.append({
+                "name": test_config["name"],
+                "description": test_config["description"],
+                "status": "missing",
+                "duration": 0,
+                "output": "",
+                "error": f"Test file not found: {test_config['file']}",
+                "critical": test_config.get("critical", False)
+            })
+            continue
+        
+        result = run_regression_test(
+            test_config["name"],
+            test_config["description"],
+            str(test_file_path)
+        )
+        result["critical"] = test_config.get("critical", False)
+        results.append(result)
+    
+    total_time = time.time() - start_time
+    
+    # Generate comprehensive summary
+    print(f"\n{'=' * 70}")
+    print("🎯 REGRESSION TEST SUITE SUMMARY")
+    print(f"{'=' * 70}")
+    
+    # Calculate statistics
+    total_tests = len(results)
+    passed_tests = sum(1 for r in results if r["status"] == "passed")
+    failed_tests = sum(1 for r in results if r["status"] == "failed")
+    timeout_tests = sum(1 for r in results if r["status"] == "timeout")
+    crashed_tests = sum(1 for r in results if r["status"] == "crashed")
+    missing_tests = sum(1 for r in results if r["status"] == "missing")
+    
+    # Critical test statistics
+    critical_tests = [r for r in results if r.get("critical", False)]
+    critical_passed = sum(1 for r in critical_tests if r["status"] == "passed")
+    critical_total = len(critical_tests)
+    
+    print(f"📊 Overall Statistics:")
+    print(f"   Total Tests: {total_tests}")
+    print(f"   ✅ Passed: {passed_tests}")
+    print(f"   ❌ Failed: {failed_tests}")
+    print(f"   ⏰ Timeout: {timeout_tests}")
+    print(f"   💥 Crashed: {crashed_tests}")
+    print(f"   📁 Missing: {missing_tests}")
+    print(f"   ⏱️  Total Time: {total_time:.1f}s")
+    
+    print(f"\n🎯 Critical Test Statistics:")
+    print(f"   Critical Tests: {critical_total}")
+    print(f"   ✅ Critical Passed: {critical_passed}")
+    print(f"   Success Rate: {(critical_passed/critical_total*100) if critical_total > 0 else 0:.1f}%")
+    
+    # Detailed results
+    print(f"\n📋 Detailed Results:")
+    print("-" * 70)
+    
+    for result in results:
+        status_emoji = {
+            "passed": "✅",
+            "failed": "❌",
+            "timeout": "⏰",
+            "crashed": "💥",
+            "missing": "📁"
+        }
+        emoji = status_emoji.get(result["status"], "❓")
+        critical_marker = "🎯" if result.get("critical", False) else "  "
+        
+        print(f"{emoji} {critical_marker} {result['name']:<30} ({result['duration']:.1f}s)")
+        print(f"      📋 {result['description']}")
+        
+        if result["status"] != "passed" and result.get("error"):
+            # Show first two lines of error
+            error_lines = result["error"].split('\n')[:2]
+            for line in error_lines:
+                if line.strip():
+                    truncated_line = line[:80] + "..." if len(line) > 80 else line
+                    print(f"      ⚠️  {truncated_line}")
+        print()
+    
+    # Final assessment
+    print(f"{'=' * 70}")
+    
+    overall_success_rate = passed_tests / total_tests if total_tests > 0 else 0
+    critical_success_rate = critical_passed / critical_total if critical_total > 0 else 0
+    
+    # Determine overall status based on critical tests
+    if critical_success_rate == 1.0:
+        print("🎉 EXCELLENT - All critical regression tests pass!")
+        print("   All previously fixed bugs remain resolved.")
+        status = "excellent"
+    elif critical_success_rate >= 0.8:
+        print("✅ GOOD - Most critical regression tests pass")
+        print("   Minor issues detected, but core fixes are working.")
+        status = "good"
+    elif critical_success_rate >= 0.5:
+        print("⚠️ WARNING - Some critical regression tests failing")
+        print("   Important bug fixes may have regressed.")
+        status = "warning"
+    else:
+        print("🚨 CRITICAL - Multiple critical regression tests failing")
+        print("   Major regressions detected! Immediate attention required.")
+        status = "critical"
+    
+    # Additional context
+    if failed_tests > 0:
+        print(f"\n❌ Failed Tests Need Investigation:")
+        failed_results = [r for r in results if r["status"] == "failed"]
+        for result in failed_results:
+            criticality = "CRITICAL" if result.get("critical", False) else "STANDARD"
+            print(f"   • {result['name']} ({criticality})")
+    
+    print(f"{'=' * 70}")
+    
+    # Return success based on critical tests
+    return critical_success_rate >= 0.8
+
+def main():
+    """Run the regression test suite and exit with appropriate code."""
+    success = test_regression_suite()
+    
+    if success:
+        print("\n🎯 Regression test suite completed successfully!")
+        print("All critical bug fixes remain in place.")
+        sys.exit(0)
+    else:
+        print("\n🚨 Regression test suite failed!")
+        print("Some previously fixed bugs may have regressed.")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

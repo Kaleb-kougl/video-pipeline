@@ -1,0 +1,20 @@
+# Vector Database Dependencies
+chromadb>=0.4.0
+sentence-transformers>=2.2.0
+numpy>=1.21.0
+
+# Character Analysis Dependencies
+dataclasses>=0.6  # For Python < 3.7 compatibility
+typing-extensions>=4.0.0  # For advanced typing support
+
+# Optional: for advanced embedding models
+transformers>=4.21.0
+torch>=1.12.0
+
+# Optional: for faster similarity search
+faiss-cpu>=1.7.0
+
+# Additional utilities for character analysis
+scikit-learn>=1.0.0  # For clustering and similarity metrics
+matplotlib>=3.5.0  # For visualization
+plotly>=5.0.0  # For interactive character relationship graphs

@@ -1,0 +1,31 @@
+{
+  "scenes": [
+    {
+      "prompt": "Naruto and Sasuke facing each other in an intense battle",
+      "base_duration": 3.0,
+      "characters": ["Naruto", "Sasuke"],
+      "scene_type": "action",
+      "emotional_intensity": 0.9
+    },
+    {
+      "prompt": "Sakura healing an injured ninja with her medical jutsu",
+      "base_duration": 2.5,
+      "characters": ["Sakura"],
+      "scene_type": "character_development",
+      "emotional_intensity": 0.6
+    },
+    {
+      "prompt": "Team 7 working together to overcome a powerful enemy",
+      "base_duration": 4.0,
+      "characters": ["Naruto", "Sasuke", "Sakura"],
+      "scene_type": "cooperation",
+      "emotional_intensity": 0.8
+    }
+  ],
+  "episode_metadata": {
+    "show": "Naruto",
+    "season": 1,
+    "episode": 5,
+    "title": "Team Formation"
+  }
+}
