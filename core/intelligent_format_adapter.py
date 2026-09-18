@@ -9,8 +9,9 @@ batch export optimization.
 
 import asyncio
 import logging
-from typing import Dict, List, Tuple, Any
+import zlib
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -21,7 +22,7 @@ class PlatformConfig:
     hook_style: str  # 'viral', 'informative', 'aesthetic'
     pacing: str  # 'fast', 'medium', 'slow'
     engagement_focus: str  # 'retention', 'watch_time', 'shares'
-    aspect_ratio: Tuple[int, int]  # (width, height)
+    aspect_ratio: tuple[int, int]  # (width, height)
     optimal_length: int  # seconds for best engagement
 
 
@@ -47,7 +48,7 @@ class IntelligentFormatAdapter:
     - Hook generation tailored to platform algorithms
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the Intelligent Format Adapter with platform configurations."""
         self.platform_configs = {
             "tiktok": PlatformConfig(
@@ -80,8 +81,8 @@ class IntelligentFormatAdapter:
         self.logger.info("Intelligent Format Adapter initialized with platform configs")
 
     async def adapt_content_for_platform(
-        self, content: Dict[str, Any], platform: str, quality_profile: Any
-    ) -> Dict[str, Any]:
+        self, content: dict[str, Any], platform: str, quality_profile: Any
+    ) -> dict[str, Any]:
         """
         Intelligently adapt content for platform-specific requirements.
 
@@ -100,9 +101,7 @@ class IntelligentFormatAdapter:
             raise ValueError(f"Unsupported platform: {platform}")
 
         config = self.platform_configs[platform]
-        self.logger.info(
-            f"Adapting content for {platform} (max: {config.max_duration}s)"
-        )
+        self.logger.info(f"Adapting content for {platform} (max: {config.max_duration}s)")
 
         # Calculate current content duration
         current_duration = sum(scene["duration"] for scene in content["scenes"])
@@ -126,15 +125,11 @@ class IntelligentFormatAdapter:
         )
 
         # Predict engagement
-        engagement_prediction = await self._predict_engagement(
-            optimized_content, platform
-        )
+        engagement_prediction = await self._predict_engagement(optimized_content, platform)
 
         # Calculate adaptation metadata
         final_duration = sum(scene["duration"] for scene in optimized_content["scenes"])
-        compression_ratio = (
-            current_duration / final_duration if final_duration > 0 else 1.0
-        )
+        compression_ratio = current_duration / final_duration if final_duration > 0 else 1.0
 
         self.logger.info(
             f"Content adapted for {platform}: {current_duration:.1f}s -> {final_duration:.1f}s "
@@ -154,8 +149,8 @@ class IntelligentFormatAdapter:
         }
 
     async def batch_adapt_for_platforms(
-        self, content: Dict[str, Any], platforms: List[str], quality_profile: Any
-    ) -> Dict[str, Dict[str, Any]]:
+        self, content: dict[str, Any], platforms: list[str], quality_profile: Any
+    ) -> dict[str, dict[str, Any]]:
         """
         Efficiently adapt content for multiple platforms simultaneously.
 
@@ -191,8 +186,8 @@ class IntelligentFormatAdapter:
         return results
 
     async def _ai_condense_content(
-        self, content: Dict[str, Any], target_duration: int, pacing: str
-    ) -> Dict[str, Any]:
+        self, content: dict[str, Any], target_duration: int, pacing: str
+    ) -> dict[str, Any]:
         """
         Use AI to intelligently condense content to target duration.
 
@@ -226,8 +221,8 @@ class IntelligentFormatAdapter:
         return {"scenes": condensed_scenes}
 
     async def _trim_scenes_proportionally(
-        self, scenes: List[Dict[str, Any]], compression_ratio: float
-    ) -> List[Dict[str, Any]]:
+        self, scenes: list[dict[str, Any]], compression_ratio: float
+    ) -> list[dict[str, Any]]:
         """
         Trim scenes proportionally to achieve target compression.
 
@@ -251,8 +246,8 @@ class IntelligentFormatAdapter:
         return trimmed_scenes
 
     async def _ai_select_key_scenes(
-        self, scenes: List[Dict[str, Any]], target_duration: int, pacing: str
-    ) -> List[Dict[str, Any]]:
+        self, scenes: list[dict[str, Any]], target_duration: int, pacing: str
+    ) -> list[dict[str, Any]]:
         """
         Use AI to select key scenes for major content condensation.
 
@@ -276,16 +271,12 @@ class IntelligentFormatAdapter:
             if pacing == "fast":
                 # Favor high-intensity, shorter scenes
                 importance_score = (
-                    emotional_weight * 0.6
-                    + character_weight * 0.3
-                    + (1 - duration_weight) * 0.1
+                    emotional_weight * 0.6 + character_weight * 0.3 + (1 - duration_weight) * 0.1
                 )
             else:
                 # Favor well-developed scenes
                 importance_score = (
-                    emotional_weight * 0.4
-                    + character_weight * 0.3
-                    + duration_weight * 0.3
+                    emotional_weight * 0.4 + character_weight * 0.3 + duration_weight * 0.3
                 )
 
             scene_scores.append((i, scene, importance_score))
@@ -297,7 +288,7 @@ class IntelligentFormatAdapter:
         selected_scenes = []
         accumulated_duration = 0
 
-        for _, scene, score in scene_scores:
+        for _, scene, _score in scene_scores:
             if accumulated_duration + scene["duration"] <= target_duration:
                 selected_scenes.append(scene)
                 accumulated_duration += scene["duration"]
@@ -319,9 +310,7 @@ class IntelligentFormatAdapter:
 
         return selected_scenes
 
-    async def _generate_platform_hook(
-        self, first_scene: Dict[str, Any], hook_style: str
-    ) -> str:
+    async def _generate_platform_hook(self, first_scene: dict[str, Any], hook_style: str) -> str:
         """
         Generate platform-specific hook for the opening scene.
 
@@ -368,18 +357,18 @@ class IntelligentFormatAdapter:
         scene_type = "battle" if "battle" in scene_content.lower() else "moment"
         character_text = " and ".join(characters[:2]) if characters else "heroes"
 
-        # Select and format hook template
-        # Use deterministic selection for consistent testing
-        template = hook_templates[hash(scene_content) % len(hook_templates)]
-        hook = template.format(
-            characters=character_text, action=action, scene_type=scene_type
-        )
+        # Select and format hook template.
+        # crc32, not hash(): str hashing is PYTHONHASHSEED-randomized per
+        # process, so hash() here picked a different template between runs.
+        index = zlib.crc32(scene_content.encode("utf-8")) % len(hook_templates)
+        template = hook_templates[index]
+        hook = template.format(characters=character_text, action=action, scene_type=scene_type)
 
         return hook
 
     async def _optimize_for_platform_algorithm(
-        self, content: Dict[str, Any], engagement_focus: str
-    ) -> Dict[str, Any]:
+        self, content: dict[str, Any], engagement_focus: str
+    ) -> dict[str, Any]:
         """
         Optimize content for specific platform algorithm requirements.
 
@@ -421,17 +410,13 @@ class IntelligentFormatAdapter:
             # Instagram-style: Emphasize visually appealing content
             # Filter and prioritize high-intensity, visually rich scenes
             high_impact_scenes = [
-                scene
-                for scene in scenes
-                if scene.get("emotional_intensity", 0.5) >= 0.7
+                scene for scene in scenes if scene.get("emotional_intensity", 0.5) >= 0.7
             ]
 
             # If we filtered too much, add back some medium-intensity scenes
             if len(high_impact_scenes) < 2 and len(scenes) > 2:
                 medium_scenes = [
-                    scene
-                    for scene in scenes
-                    if 0.5 <= scene.get("emotional_intensity", 0.5) < 0.7
+                    scene for scene in scenes if 0.5 <= scene.get("emotional_intensity", 0.5) < 0.7
                 ]
                 high_impact_scenes.extend(medium_scenes[:2])
 
@@ -449,7 +434,7 @@ class IntelligentFormatAdapter:
         return {"scenes": optimized_scenes}
 
     async def _predict_engagement(
-        self, content: Dict[str, Any], platform: str
+        self, content: dict[str, Any], platform: str
     ) -> EngagementPrediction:
         """
         Predict engagement metrics for platform content.
@@ -519,9 +504,7 @@ class IntelligentFormatAdapter:
             confidence_score=confidence_score,
         )
 
-    async def _analyze_engagement_factors(
-        self, content: Dict[str, Any]
-    ) -> Dict[str, float]:
+    async def _analyze_engagement_factors(self, content: dict[str, Any]) -> dict[str, float]:
         """
         Analyze content for engagement prediction factors.
 
@@ -550,9 +533,7 @@ class IntelligentFormatAdapter:
         if len(intensities) > 1:
             import statistics
 
-            emotional_variance = (
-                statistics.stdev(intensities) / 0.5
-            )  # Normalize by max stdev
+            emotional_variance = statistics.stdev(intensities) / 0.5  # Normalize by max stdev
             emotional_variance = min(1.0, emotional_variance)
         else:
             emotional_variance = 0.0
@@ -562,9 +543,7 @@ class IntelligentFormatAdapter:
         for scene in scenes:
             all_characters.update(scene.get("characters", []))
 
-        character_appeal = min(
-            1.0, len(all_characters) / 5.0
-        )  # Normalize by typical cast size
+        character_appeal = min(1.0, len(all_characters) / 5.0)  # Normalize by typical cast size
 
         # Calculate narrative coherence (scene connection and flow)
         # Simplified: based on character continuity between scenes

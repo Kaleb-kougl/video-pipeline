@@ -13,6 +13,11 @@ from typing import Dict, Any
 from main import AnimeVideoGenerator
 from core.schemas import ProcessingResult, VideoStructureConfig
 
+# Live-network suite: these tests scrape Fandom/Google and hit real HTTP
+# endpoints, so they are deselected by default (see the 'network' marker in
+# pyproject.toml). Run them explicitly with: pytest -m network
+pytestmark = pytest.mark.network
+
 # Pytest fixtures for test setup
 @pytest.fixture
 def mock_generator():

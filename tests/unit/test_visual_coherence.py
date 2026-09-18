@@ -27,29 +27,8 @@ except ImportError:
     pass
 
 
-class RecordingImageGenerator:
-    """
-    Stand-in for a real image generator, injected through the public seam.
-
-    The manager itself is never patched: this writes actual image files to disk
-    so the OpenCV scoring, retry and reference-update logic all run for real.
-    """
-
-    def __init__(self, image_factory, color=(200, 40, 40)):
-        self._image_factory = image_factory
-        self.color = color
-        self.prompts: List[str] = []
-        self.paths: List[str] = []
-
-    async def __call__(self, prompt: str) -> str:
-        self.prompts.append(prompt)
-        path = self._image_factory(color=self.color)
-        self.paths.append(path)
-        return path
-
-    @property
-    def call_count(self) -> int:
-        return len(self.prompts)
+# The injectable RecordingImageGenerator and the `image_factory` /
+# `make_generator` fixtures live in tests/conftest.py.
 
 
 class TestVisualCoherenceSystem:
@@ -72,34 +51,6 @@ class TestVisualCoherenceSystem:
     def sample_characters(self) -> List[str]:
         """Sample characters for testing."""
         return ["Naruto", "Sasuke", "Sakura"]
-
-    @pytest.fixture
-    def image_factory(self, tmp_path):
-        """Write real image files to disk for OpenCV to read."""
-        counter = {"n": 0}
-
-        def _make(color=None, size=(240, 320), seed=None):
-            counter["n"] += 1
-            if seed is not None:
-                rng = np.random.default_rng(seed)
-                image = rng.integers(0, 256, (*size, 3), dtype=np.uint8)
-            else:
-                image = np.zeros((*size, 3), dtype=np.uint8)
-                image[:, :] = color if color is not None else (0, 0, 0)
-            path = tmp_path / f"image_{counter['n']}.png"
-            assert cv2.imwrite(str(path), image), "Test image should be written"
-            return str(path)
-
-        return _make
-
-    @pytest.fixture
-    def make_generator(self, image_factory):
-        """Factory for injectable recording image generators."""
-
-        def _make(color=(200, 40, 40)):
-            return RecordingImageGenerator(image_factory, color=color)
-
-        return _make
 
     @pytest.fixture
     def coherence_manager(self):

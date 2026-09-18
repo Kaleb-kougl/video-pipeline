@@ -9,26 +9,16 @@ instead of the .get() method.
 
 import pytest
 import sqlite3
-import tempfile
 import os
-from pathlib import Path
-
-from core.database import DatabaseManager
 
 
 class TestDatabaseManager:
     """Test suite for DatabaseManager class focusing on Row object access."""
 
     @pytest.fixture
-    def temp_db(self):
-        """Create a temporary database for testing."""
-        fd, temp_path = tempfile.mkstemp(suffix='.db')
-        os.close(fd)  # Close the file descriptor, we just need the path
-        db = DatabaseManager(temp_path)
-        yield db, temp_path
-        # Cleanup
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
+    def temp_db(self, database_manager, temp_db_path):
+        """(db, path) pair backed by the shared tmp_path fixtures in conftest.py."""
+        return database_manager, temp_db_path
 
     def test_database_initialization(self, temp_db):
         """Test that the database initializes correctly."""

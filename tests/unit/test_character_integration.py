@@ -10,10 +10,7 @@ Following TDD methodology - these tests should FAIL initially (RED phase).
 """
 
 import pytest
-import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
-from typing import Dict, Any
 
 # Import the module we're testing - will fail initially
 try:
@@ -29,19 +26,7 @@ except ImportError:
 class TestEpisodeCharacterEnhancer:
     """Test suite for character analysis integration into episode processing."""
 
-    @pytest.fixture
-    def sample_episode_content(self) -> Dict[str, Any]:
-        """Sample episode content for testing."""
-        fixtures_path = Path(__file__).parent.parent / "fixtures" / "character_data"
-        with open(fixtures_path / "sample_episode_content.json") as f:
-            return json.load(f)
-
-    @pytest.fixture
-    def sample_character_analysis(self) -> Dict[str, Any]:
-        """Sample character analysis data."""
-        fixtures_path = Path(__file__).parent.parent / "fixtures" / "character_data"
-        with open(fixtures_path / "sample_character_analysis.json") as f:
-            return json.load(f)
+    # sample_episode_content / sample_character_analysis come from tests/conftest.py
 
     @pytest.fixture
     def mock_character_analyzer(self):

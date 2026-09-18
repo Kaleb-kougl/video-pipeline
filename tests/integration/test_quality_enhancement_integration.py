@@ -12,8 +12,6 @@ Tests validate that components work together seamlessly.
 """
 
 import pytest
-import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.character_episode_enhancer import EpisodeCharacterEnhancer, CharacterWeight
@@ -25,19 +23,7 @@ from core.intelligent_format_adapter import IntelligentFormatAdapter
 class TestQualityEnhancementIntegration:
     """Integration tests for all Phase 2 quality enhancement components."""
 
-    @pytest.fixture
-    def sample_episode_content(self):
-        """Sample episode content for integration testing."""
-        fixtures_path = Path(__file__).parent.parent / "fixtures" / "character_data"
-        with open(fixtures_path / "sample_episode_content.json") as f:
-            return json.load(f)
-
-    @pytest.fixture
-    def sample_character_analysis(self):
-        """Sample character analysis data."""
-        fixtures_path = Path(__file__).parent.parent / "fixtures" / "character_data"
-        with open(fixtures_path / "sample_character_analysis.json") as f:
-            return json.load(f)
+    # sample_episode_content / sample_character_analysis come from tests/conftest.py
 
     @pytest.fixture
     def quality_enhancement_pipeline(self):
@@ -124,7 +110,7 @@ class TestQualityEnhancementIntegration:
         quality_enhancement_pipeline,
         sample_episode_content,
         sample_character_analysis,
-        tmp_path,
+        make_generator,
     ):
         """
         Test visual coherence integration with character-enhanced prompts.
@@ -153,22 +139,10 @@ class TestQualityEnhancementIntegration:
         # Inject an image generator through the public seam: it writes a real
         # image file, so the consistency scoring and reference update below run
         # for real rather than being patched away.
-        import cv2
         import numpy as np
 
         coherence = pipeline["visual_coherence"]
-        image_path = str(tmp_path / "integrated_image.png")
-        image = np.random.default_rng(3).integers(
-            0, 256, (480, 640, 3), dtype=np.uint8
-        )
-        assert cv2.imwrite(image_path, image), "Test image should be written"
-
-        prompts_seen = []
-
-        async def generator(prompt):
-            prompts_seen.append(prompt)
-            return image_path
-
+        generator = make_generator(seed=3, size=(480, 640))
         coherence.image_generator = generator
 
         # Generate image with enhanced prompt
@@ -176,10 +150,10 @@ class TestQualityEnhancementIntegration:
             enhanced_prompt, characters, episode_context
         )
 
-        assert result == image_path, "Should return the generator's image path"
+        assert result == generator.paths[0], "Should return the generator's image path"
 
         # Verify enhanced prompt was used
-        called_prompt = prompts_seen[0]
+        called_prompt = generator.prompts[0]
         assert len(called_prompt) > len(
             enhanced_prompt
         ), "Prompt should be further enhanced for consistency"

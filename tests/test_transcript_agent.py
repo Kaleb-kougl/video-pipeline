@@ -13,6 +13,13 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agents.transcript_agent import TranscriptDiscoveryAgent
 
+import pytest
+
+# Live-network suite: these tests scrape Fandom/Google and hit real HTTP
+# endpoints, so they are deselected by default (see the 'network' marker in
+# pyproject.toml). Run them explicitly with: pytest -m network
+pytestmark = pytest.mark.network
+
 # Set up logging to see the search process
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 

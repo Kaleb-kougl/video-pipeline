@@ -12,6 +12,13 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+import pytest
+
+# Live-network suite: these tests scrape Fandom/Google and hit real HTTP
+# endpoints, so they are deselected by default (see the 'network' marker in
+# pyproject.toml). Run them explicitly with: pytest -m network
+pytestmark = pytest.mark.network
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

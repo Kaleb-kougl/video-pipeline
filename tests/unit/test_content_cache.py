@@ -13,7 +13,7 @@ import json
 import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 from typing import Dict, Any, List
 
 # Import the module we're testing - will fail initially
@@ -426,37 +426,26 @@ class TestCacheStats:
 class TestCacheIntegration:
     """Integration tests for content cache with existing systems."""
 
-    @pytest.fixture
-    def mock_image_generator(self):
-        """Mock image generator for integration testing."""
-        generator = Mock()
-        generator.generate_image.return_value = {
-            "url": "/generated/test_image.png",
-            "prompt": "test prompt",
-            "style": "anime"
-        }
-        return generator
-
-    def test_cache_integration_with_image_generation(self, mock_image_generator):
+    def test_cache_integration_with_image_generation(self, fake_image_generator):
         """Test cache integration with image generation workflow."""
         content_cache = ContentCache()
         prompt = "anime forest training scene"
         
         # First generation - should miss cache
         result1 = content_cache.get_or_generate_image(
-            prompt, mock_image_generator, episode_context="S1E1"
+            prompt, fake_image_generator, episode_context="S1E1"
         )
         
         assert content_cache.stats.cache_misses == 1
-        assert mock_image_generator.generate_image.call_count == 1
+        assert fake_image_generator.call_count == 1
         
         # Second generation with same prompt - should find similar content
         result2 = content_cache.get_or_generate_image(
-            prompt, mock_image_generator, episode_context="S1E1"  # Same context should hit cache
+            prompt, fake_image_generator, episode_context="S1E1"  # Same context should hit cache
         )
         
         assert content_cache.stats.cache_hits == 1
-        assert mock_image_generator.generate_image.call_count == 1  # No additional call
+        assert fake_image_generator.call_count == 1  # No additional call
         assert result1 == result2
 
     def test_cache_with_character_enhancement_integration(self):
