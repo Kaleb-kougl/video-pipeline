@@ -7,7 +7,7 @@ name = "anime-video-generator"
 version = "1.0.0"
 description = "AI-powered anime video generation system with comprehensive character and season analysis"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "Anime Video Generator Team"}
@@ -18,8 +18,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Multimedia :: Video",
@@ -102,7 +100,7 @@ include = ["agents*", "config*", "core*", "media*", "utils*"]
 
 [tool.black]
 line-length = 100
-target-version = ['py39', 'py310', 'py311']
+target-version = ['py311', 'py312']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -119,7 +117,16 @@ profile = "black"
 line_length = 100
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# Network-touching suites are opt-in: several tests scrape live sites and hang.
+markers = [
+    "network: test performs live network I/O (deselected by default)",
+]
+addopts = "-m 'not network' --timeout=120"
