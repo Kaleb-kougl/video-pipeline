@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Anime Video Generator Team"}
+    {name = "Kaleb Kougl", email = "kalebkougl@gmail.com"}
 ]
 keywords = ["anime", "video", "ai", "generation", "character-analysis", "chromadb"]
 classifiers = [
@@ -86,13 +86,12 @@ dev = [
 ]
 
 [project.scripts]
-anime-generator = "main_refactored:main"
+anime-generator = "main:main"
 
 [project.urls]
-Homepage = "https://github.com/your-username/anime-video-generator"
-Repository = "https://github.com/your-username/anime-video-generator"
-Documentation = "https://github.com/your-username/anime-video-generator/wiki"
-Issues = "https://github.com/your-username/anime-video-generator/issues"
+Homepage = "https://github.com/kalebkougl/anime-video-generator"
+Repository = "https://github.com/kalebkougl/anime-video-generator"
+Issues = "https://github.com/kalebkougl/anime-video-generator/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

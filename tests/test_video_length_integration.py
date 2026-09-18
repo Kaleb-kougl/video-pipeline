@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, Any
 
-from main_refactored import AnimeVideoGenerator
+from main import AnimeVideoGenerator
 from core.schemas import ProcessingResult, VideoStructureConfig
 
 # Pytest fixtures for test setup
@@ -24,7 +24,7 @@ def mock_generator():
     Returns:
         Mock: Configured mock AnimeVideoGenerator instance
     """
-    with patch('main_refactored.AnimeVideoGenerator') as mock_gen:
+    with patch('main.AnimeVideoGenerator') as mock_gen:
         generator = Mock(spec=AnimeVideoGenerator)
         # Mock essential methods
         generator._calculate_video_structure = Mock()
@@ -58,8 +58,8 @@ class TestVideoLengthIntegration:
     voice generation, image creation, and final video composition.
     """
     
-    @patch('main_refactored.AnimeVideoGenerator._create_voice_recording')
-    @patch('main_refactored.AnimeVideoGenerator._generate_season_images') 
+    @patch('main.AnimeVideoGenerator._create_voice_recording')
+    @patch('main.AnimeVideoGenerator._generate_season_images') 
     @pytest.mark.asyncio
     async def test_process_season_with_custom_length(self, mock_images, mock_voice):
         """Test complete season processing with custom video length.

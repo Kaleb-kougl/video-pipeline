@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-Test the new free tier messaging system.
+Manual smoke check for the free-tier fallback messaging system.
+
+Not a pytest test: it unsets GOOGLE_API_KEY to force the image/audio
+fallback paths and writes real files under "Message Test Show/".
+Run directly:  python scripts/check_fallback_messaging.py
 """
 
 import sys
 import os
-sys.path.append('.')
+
+# Allow importing project packages when run from anywhere.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Remove API key to force fallbacks
 if 'GOOGLE_API_KEY' in os.environ:

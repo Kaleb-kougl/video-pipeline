@@ -207,7 +207,7 @@ class TestDatabaseManager:
         assert (not episode3 or not episode3['transcript'])       # Should fail condition (empty string)
 
     def test_main_code_integration_patterns(self, temp_db):
-        """Test the exact patterns used in main_refactored.py."""
+        """Test the exact patterns used in main.py."""
         db, _ = temp_db
         
         # Save test episode

@@ -77,13 +77,13 @@ Phase 2 features are **automatically integrated** into the main video creation p
 # Phase 2 features are now active in all video creation commands:
 
 # Episode processing with Phase 2 enhancement
-python main_refactored.py process-episode "My Hero Academia" 1 4 --full
+python main.py process-episode "My Hero Academia" 1 4 --full
 
 # Season processing with Phase 2 enhancement  
-python main_refactored.py process-season "My Hero Academia" 1 --full
+python main.py process-season "My Hero Academia" 1 --full
 
 # Season summaries with Phase 2 platform optimization
-python main_refactored.py create-season-summary "My Hero Academia" 1 --format tiktok
+python main.py create-season-summary "My Hero Academia" 1 --format tiktok
 ```
 
 #### Phase 2 Integration Details
@@ -206,29 +206,29 @@ source .venv/bin/activate  # macOS/Linux
 pip install -r requirements.txt
 
 # Test the system
-python main_refactored.py --help
+python main.py --help
 
 # Discover transcript sources
-python main_refactored.py discover-sources "My Hero Academia" --season 1
+python main.py discover-sources "My Hero Academia" --season 1
 
 # Process an episode
-python main_refactored.py process-episode "My Hero Academia" 1 4
+python main.py process-episode "My Hero Academia" 1 4
 
 # NEW: Create comprehensive season summary with configurable video length
-python main_refactored.py create-season-summary "My Hero Academia" 1 --duration 10  # minutes (5-15)
+python main.py create-season-summary "My Hero Academia" 1 --duration 10  # minutes (5-15)
 
 # NEW: Export for social media platforms
-python main_refactored.py create-season-summary "My Hero Academia" 1 --format youtube_shorts
-python main_refactored.py create-season-summary "Attack on Titan" 1 --format tiktok --duration 8  # minutes (5-15)
+python main.py create-season-summary "My Hero Academia" 1 --format youtube_shorts
+python main.py create-season-summary "Attack on Titan" 1 --format tiktok --duration 8  # minutes (5-15)
 
 # NEW: Analyze characters with ChromaDB
-python main_refactored.py analyze-characters "My Hero Academia" 1 4
+python main.py analyze-characters "My Hero Academia" 1 4
 
 # NEW: Migrate existing ChromaDB data to include show metadata  
 python scripts/migrate_metadata.py
 
 # Check system stats
-python main_refactored.py stats
+python main.py stats
 
 # 🧹 CLEANED: All databases moved to data/databases/, docs to docs/, tests to tests/
 # See docs/DIRECTORY_STRUCTURE.md for complete organization details
@@ -262,17 +262,17 @@ python character_analysis_demo.py
 
 ```bash
 # Duration examples (minutes)
-python main_refactored.py create-season-summary "Show" 1 --duration 5   # 5 minutes
-python main_refactored.py create-season-summary "Show" 1 --duration 15  # 15 minutes (max)
+python main.py create-season-summary "Show" 1 --duration 5   # 5 minutes
+python main.py create-season-summary "Show" 1 --duration 15  # 15 minutes (max)
 
 # Season/episode numbers (integers)
-python main_refactored.py process-episode "My Hero Academia" 1 4        # Season 1, Episode 4
-python main_refactored.py discover-sources "Attack on Titan" --season 3 # Season 3
+python main.py process-episode "My Hero Academia" 1 4        # Season 1, Episode 4
+python main.py discover-sources "Attack on Titan" --season 3 # Season 3
 
 # Format options (strings)
-python main_refactored.py create-season-summary "Show" 1 --format standard          # Full-length MP4
-python main_refactored.py create-season-summary "Show" 1 --format youtube_shorts   # Vertical 60s max
-python main_refactored.py create-season-summary "Show" 1 --format tiktok          # Vertical 60s viral
+python main.py create-season-summary "Show" 1 --format standard          # Full-length MP4
+python main.py create-season-summary "Show" 1 --format youtube_shorts   # Vertical 60s max
+python main.py create-season-summary "Show" 1 --format tiktok          # Vertical 60s viral
 ```
 
 ## 🔧 Complete CLI Commands Reference
@@ -287,9 +287,9 @@ python main_refactored.py create-season-summary "Show" 1 --format tiktok        
 
 ```bash
 # Examples
-python main_refactored.py process-url "https://example.com/transcript" "My Hero Academia"
-python main_refactored.py process-episode "My Hero Academia" 1 4 --full
-python main_refactored.py process-season "Attack on Titan" 1 --start 1 --end 5 --full
+python main.py process-url "https://example.com/transcript" "My Hero Academia"
+python main.py process-episode "My Hero Academia" 1 4 --full
+python main.py process-season "Attack on Titan" 1 --start 1 --end 5 --full
 ```
 
 ### 📊 **Season Analysis Commands**
@@ -302,9 +302,9 @@ python main_refactored.py process-season "Attack on Titan" 1 --start 1 --end 5 -
 
 ```bash
 # Examples  
-python main_refactored.py create-season-summary "My Hero Academia" 1 --duration 10 --format youtube_shorts
-python main_refactored.py analyze-season "Attack on Titan" 1
-python main_refactored.py view-season-summaries --show "My Hero Academia"
+python main.py create-season-summary "My Hero Academia" 1 --duration 10 --format youtube_shorts
+python main.py analyze-season "Attack on Titan" 1
+python main.py view-season-summaries --show "My Hero Academia"
 ```
 
 ### 🎭 **Character Analysis Commands**
@@ -320,12 +320,12 @@ python main_refactored.py view-season-summaries --show "My Hero Academia"
 
 ```bash
 # Examples
-python main_refactored.py analyze-characters "My Hero Academia" 1 4
-python main_refactored.py similar-characters "Deku" --show "My Hero Academia" --limit 3
-python main_refactored.py character-development "Deku" "My Hero Academia"
-python main_refactored.py character-relationships "Deku" --show "My Hero Academia"
-python main_refactored.py search-character-moments "heroic moment" --character "Deku" --limit 5
-python main_refactored.py character-stats
+python main.py analyze-characters "My Hero Academia" 1 4
+python main.py similar-characters "Deku" --show "My Hero Academia" --limit 3
+python main.py character-development "Deku" "My Hero Academia"
+python main.py character-relationships "Deku" --show "My Hero Academia"
+python main.py search-character-moments "heroic moment" --character "Deku" --limit 5
+python main.py character-stats
 ```
 
 ### 🔍 **Discovery & Source Commands**
@@ -339,10 +339,10 @@ python main_refactored.py character-stats
 
 ```bash
 # Examples
-python main_refactored.py discover "My Hero Academia" --season 1
-python main_refactored.py discover-sources "Attack on Titan" --season 3
-python main_refactored.py evaluate-source "https://example.com" "My Hero Academia"
-python main_refactored.py recommend-sources "Demon Slayer" --season 1
+python main.py discover "My Hero Academia" --season 1
+python main.py discover-sources "Attack on Titan" --season 3
+python main.py evaluate-source "https://example.com" "My Hero Academia"
+python main.py recommend-sources "Demon Slayer" --season 1
 ```
 
 ### 🔎 **Vector Search Commands**
@@ -356,10 +356,10 @@ python main_refactored.py recommend-sources "Demon Slayer" --season 1
 
 ```bash
 # Examples
-python main_refactored.py search-episodes "character development" --show "My Hero Academia" --limit 5
-python main_refactored.py similar-episodes "My Hero Academia" 1 4 --limit 3
-python main_refactored.py vector-stats
-python main_refactored.py index-episode "My Hero Academia" 1 4
+python main.py search-episodes "character development" --show "My Hero Academia" --limit 5
+python main.py similar-episodes "My Hero Academia" 1 4 --limit 3
+python main.py vector-stats
+python main.py index-episode "My Hero Academia" 1 4
 ```
 
 ### 🗄️ **Content Caching Commands**
@@ -372,9 +372,9 @@ python main_refactored.py index-episode "My Hero Academia" 1 4
 
 ```bash
 # Examples
-python main_refactored.py cache-stats
-python main_refactored.py clear-cache --type image
-python main_refactored.py cache-info
+python main.py cache-stats
+python main.py clear-cache --type image
+python main.py cache-info
 ```
 
 ### 🧪 **Testing & Quality Commands**
@@ -389,11 +389,11 @@ python main_refactored.py cache-info
 
 ```bash
 # Examples
-python main_refactored.py test-transcript "My Hero Academia" 1 4
-python main_refactored.py analyze-quality "My Hero Academia" 1 4
-python main_refactored.py validate-quality "My Hero Academia" 1 4 --stage transcript
-python main_refactored.py quality-dashboard
-python main_refactored.py quality-trends --show "My Hero Academia" --days 7
+python main.py test-transcript "My Hero Academia" 1 4
+python main.py analyze-quality "My Hero Academia" 1 4
+python main.py validate-quality "My Hero Academia" 1 4 --stage transcript
+python main.py quality-dashboard
+python main.py quality-trends --show "My Hero Academia" --days 7
 ```
 
 ### 📈 **Information & Statistics Commands**
@@ -405,28 +405,28 @@ python main_refactored.py quality-trends --show "My Hero Academia" --days 7
 
 ```bash
 # Examples
-python main_refactored.py stats
-python main_refactored.py summarize "My Hero Academia" 1 4
+python main.py stats
+python main.py summarize "My Hero Academia" 1 4
 ```
 
 ### 🎯 **Most Common Workflows:**
 
 ```bash
 # 1. Process single episode with full pipeline
-python main_refactored.py process-episode "My Hero Academia" 1 4 --full
+python main.py process-episode "My Hero Academia" 1 4 --full
 
 # 2. Create season summary video (10 minutes, TikTok format)
-python main_refactored.py create-season-summary "My Hero Academia" 1 --duration 10 --format tiktok
+python main.py create-season-summary "My Hero Academia" 1 --duration 10 --format tiktok
 
 # 3. Analyze characters in episode
-python main_refactored.py analyze-characters "My Hero Academia" 1 4
+python main.py analyze-characters "My Hero Academia" 1 4
 
 # 4. Search for character development moments
-python main_refactored.py search-character-moments "character growth" --show "My Hero Academia"
+python main.py search-character-moments "character growth" --show "My Hero Academia"
 
 # 5. Check system quality and statistics  
-python main_refactored.py stats
-python main_refactored.py quality-dashboard
+python main.py stats
+python main.py quality-dashboard
 ```
 
 ## 🎬 Export Formats
@@ -437,19 +437,19 @@ Select a target platform with a single parameter:
 
 ```bash
 # Standard format (default) - Full-length MP4
-python main_refactored.py create-season-summary "Show Name" 1
+python main.py create-season-summary "Show Name" 1
 
 # YouTube Shorts - Vertical 9:16, max 60 seconds
-python main_refactored.py create-season-summary "Show Name" 1 --format youtube_shorts
+python main.py create-season-summary "Show Name" 1 --format youtube_shorts
 
 # TikTok - Vertical 9:16, max 60 seconds, viral optimization
-python main_refactored.py create-season-summary "Show Name" 1 --format tiktok
+python main.py create-season-summary "Show Name" 1 --format tiktok
 
 # Instagram Reels - Vertical 9:16, max 90 seconds, aesthetic focus
-python main_refactored.py create-season-summary "Show Name" 1 --format instagram_reels
+python main.py create-season-summary "Show Name" 1 --format instagram_reels
 
 # Twitter - Horizontal 16:9, max 140 seconds, news-style
-python main_refactored.py create-season-summary "Show Name" 1 --format twitter
+python main.py create-season-summary "Show Name" 1 --format twitter
 ```
 
 ### Platform-Specific Definitions
@@ -529,8 +529,8 @@ htmlParser/
 │   └── *.ipynb                   # Analysis and experimentation
 │
 ├── 📁 scripts/                   # Utility scripts
-│   ├── migrate_structure.py      # Migration utilities
-│   └── main copy.py              # Legacy script backup
+│   ├── migrate_metadata.py       # Metadata migration
+│   └── migrate_structure.py      # Migration utilities
 │
 ├── 📁 logs/                      # Application logs
 │   └── anime_generator.log       # System logs
@@ -548,8 +548,7 @@ htmlParser/
 ├── 📁 My Hero Academia/          # Example output
 │   └── Season1/Episode4/         # Generated content
 │
-├── main.py                       # Original monolithic implementation
-├── main_refactored.py            # Modern modular CLI
+├── main.py                       # Modular CLI entry point
 ├── requirements.txt              # Python dependencies
 ├── requirements-vector.txt       # NEW: Vector analysis dependencies
 ├── SEASON_PROCESSING_GUIDE.md    # NEW: Season processing documentation
@@ -585,8 +584,8 @@ htmlParser/
 │   └── *.ipynb                   # Analysis and experimentation
 │
 ├── 📁 scripts/                   # Utility scripts
-│   ├── migrate_structure.py      # Migration utilities
-│   └── main copy.py              # Legacy script backup
+│   ├── migrate_metadata.py       # Metadata migration
+│   └── migrate_structure.py      # Migration utilities
 │
 ├── 📁 logs/                      # Application logs
 │   └── anime_generator.log       # System logs
@@ -597,8 +596,7 @@ htmlParser/
 ├── 📁 My Hero Academia/          # Example output
 │   └── Season1/Episode4/         # Generated content
 │
-├── main.py                       # Original monolithic implementation
-├── main_refactored.py            # Modern modular CLI
+├── main.py                       # Modular CLI entry point
 ├── requirements.txt              # Python dependencies
 └── video_generator.db            # SQLite database
 ```
@@ -713,7 +711,7 @@ The system transforms anime episode transcripts into complete YouTube videos thr
 #### **Stage 1: Transcript Discovery & Extraction** 🔍
 
 ```bash
-python main_refactored.py process-episode "My Hero Academia" 1 4
+python main.py process-episode "My Hero Academia" 1 4
 ```
 
 **What happens:**
@@ -947,26 +945,26 @@ The comprehensive `process_season` function provides season-level analysis and m
 
 ```bash
 # Create comprehensive season summary (default 5 minutes)
-python main_refactored.py create-season-summary "My Hero Academia" 1
+python main.py create-season-summary "My Hero Academia" 1
 
 # Create custom-length season summary (5-15 minutes)
-python main_refactored.py create-season-summary "My Hero Academia" 1 --duration 8
-python main_refactored.py create-season-summary "My Hero Academia" 1 --duration 12
-python main_refactored.py create-season-summary "My Hero Academia" 1 --duration 15
+python main.py create-season-summary "My Hero Academia" 1 --duration 8
+python main.py create-season-summary "My Hero Academia" 1 --duration 12
+python main.py create-season-summary "My Hero Academia" 1 --duration 15
 
 # Force reprocessing existing summary with custom duration
-python main_refactored.py create-season-summary "My Hero Academia" 1 --force --duration 10
+python main.py create-season-summary "My Hero Academia" 1 --force --duration 10
 
 # Export for social media platforms
-python main_refactored.py create-season-summary "My Hero Academia" 1 --format youtube_shorts --duration 8
-python main_refactored.py create-season-summary "My Hero Academia" 1 --format tiktok
-python main_refactored.py create-season-summary "My Hero Academia" 1 --format instagram_reels --duration 12
+python main.py create-season-summary "My Hero Academia" 1 --format youtube_shorts --duration 8
+python main.py create-season-summary "My Hero Academia" 1 --format tiktok
+python main.py create-season-summary "My Hero Academia" 1 --format instagram_reels --duration 12
 
 # View all existing summaries
-python main_refactored.py view-season-summaries
+python main.py view-season-summaries
 
 # Filter summaries by show
-python main_refactored.py view-season-summaries --show "My Hero Academia"
+python main.py view-season-summaries --show "My Hero Academia"
 ```
 
 ### Integration with Episode Processing
@@ -1036,79 +1034,79 @@ Visual concepts automatically adjust based on video length:
 
 ```bash
 # Process single episode
-python main_refactored.py process-episode "Show Name" 1 4
+python main.py process-episode "Show Name" 1 4
 
 # Process multiple episodes
-python main_refactored.py process-season "Show Name" 1 --start 1 --end 5
+python main.py process-season "Show Name" 1 --start 1 --end 5
 
 # NEW: Create comprehensive season summary with configurable video length
-python main_refactored.py create-season-summary "Show Name" 1 --duration 8
+python main.py create-season-summary "Show Name" 1 --duration 8
 
 # NEW: View existing season summaries
-python main_refactored.py view-season-summaries --show "Show Name"
+python main.py view-season-summaries --show "Show Name"
 
 # Process from URL
-python main_refactored.py process-url "https://example.com/transcript" "Show Name"
+python main.py process-url "https://example.com/transcript" "Show Name"
 ```
 
 ### Discovery & Testing
 
 ```bash
 # Test transcript discovery
-python main_refactored.py test-transcript "Show Name" 1 4
+python main.py test-transcript "Show Name" 1 4
 
 # Discover available episodes
-python main_refactored.py discover "Show Name" --season 1
+python main.py discover "Show Name" --season 1
 
 # Find transcript sources
-python main_refactored.py discover-sources "Show Name" --season 1
+python main.py discover-sources "Show Name" --season 1
 
 # Get source recommendations
-python main_refactored.py recommend-sources "Show Name"
+python main.py recommend-sources "Show Name"
 
 # Evaluate specific source
-python main_refactored.py evaluate-source "https://example.com" "Show Name"
+python main.py evaluate-source "https://example.com" "Show Name"
 ```
 
 ### Character Analysis (NEW!)
 
 ```bash
 # Analyze characters in an episode
-python main_refactored.py analyze-characters "My Hero Academia" 1 4
+python main.py analyze-characters "My Hero Academia" 1 4
 
 # Find similar characters
-python main_refactored.py similar-characters "Izuku" --show "My Hero Academia"
+python main.py similar-characters "Izuku" --show "My Hero Academia"
 
 # Analyze character development
-python main_refactored.py character-development "Izuku" "My Hero Academia"
+python main.py character-development "Izuku" "My Hero Academia"
 
 # Get character relationships
-python main_refactored.py character-relationships "Izuku" --show "My Hero Academia"
+python main.py character-relationships "Izuku" --show "My Hero Academia"
 
 # Search for character moments
-python main_refactored.py search-character-moments "heroic determination"
+python main.py search-character-moments "heroic determination"
 
 # Character database statistics
-python main_refactored.py character-stats
+python main.py character-stats
 ```
 
 ### Quality & Analytics
 
 ```bash
 # Analyze episode quality
-python main_refactored.py analyze-quality "Show Name" 1 4
+python main.py analyze-quality "Show Name" 1 4
 
 # Comprehensive quality validation
-python main_refactored.py validate-quality "Show Name" 1 4
+python main.py validate-quality "Show Name" 1 4
 
 # Stage-specific validation
-python main_refactored.py validate-quality "Show Name" 1 4 --stage transcript
+python main.py validate-quality "Show Name" 1 4 --stage transcript
 
 # Quality dashboard
-python main_refactored.py quality-dashboard
+python main.py quality-dashboard
 
 # System statistics
-python main_refactored.py stats
+python main.py stats
 ```
 
 ## 🧪 Testing
@@ -1216,7 +1214,7 @@ See `requirements.txt` for complete dependency list.
 
 1. Create agent file in `agents/` directory
 2. Add to `agents/__init__.py`
-3. Import in `main_refactored.py`
+3. Import in `main.py`
 4. Add tests in `tests/`
 
 ### Running Tests

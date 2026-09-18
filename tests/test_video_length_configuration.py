@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 import tempfile
 from pathlib import Path
 
-from main_refactored import AnimeVideoGenerator
+from main import AnimeVideoGenerator
 from core.schemas import VideoStructureConfig, VisualTimingConfig
 
 class TestVideoLengthConfiguration:

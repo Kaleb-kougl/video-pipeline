@@ -178,7 +178,7 @@ def validate_beautiful_soup_usage():
 
 def test_beautiful_soup_integration_with_main():
     """
-    Test that main_refactored.py properly integrates with the Beautiful Soup-enabled transcript agent.
+    Test that main.py properly integrates with the Beautiful Soup-enabled transcript agent.
     
     Validates the integration between the main application and the transcript agent
     to ensure Beautiful Soup functionality is properly accessible and functional
@@ -188,12 +188,12 @@ def test_beautiful_soup_integration_with_main():
         bool: True if integration tests pass, False otherwise
     """
     
-    print(f"\n🔗 Beautiful Soup Integration Test with main_refactored.py")
+    print(f"\n🔗 Beautiful Soup Integration Test with main.py")
     print("=" * 55)
     
     try:
         # Import the main application
-        from main_refactored import AnimeVideoGenerator
+        from main import AnimeVideoGenerator
         
         print("✅ Successfully imported AnimeVideoGenerator")
         
@@ -237,7 +237,7 @@ def test_beautiful_soup_integration_with_main():
         else:
             print("❌ Transcript agent not found in main application")
         
-        print(f"\n✅ Beautiful Soup integration with main_refactored.py is working correctly")
+        print(f"\n✅ Beautiful Soup integration with main.py is working correctly")
         return True
         
     except Exception as e:

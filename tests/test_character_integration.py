@@ -171,13 +171,13 @@ def show_character_analysis_commands():
     ]
     
     for cmd, desc in commands:
-        print(f"📝 python3 main_refactored.py {cmd} --help")
+        print(f"📝 python3 main.py {cmd} --help")
         print(f"   {desc}\n")
     
     print("💡 Example Usage:")
-    print("   python3 main_refactored.py analyze-characters 'My Hero Academia' 1 1")
-    print("   python3 main_refactored.py similar-characters 'Izuku'")
-    print("   python3 main_refactored.py search-character-moments 'heroic determination'")
+    print("   python3 main.py analyze-characters 'My Hero Academia' 1 1")
+    print("   python3 main.py similar-characters 'Izuku'")
+    print("   python3 main.py search-character-moments 'heroic determination'")
 
 if __name__ == "__main__":
     print("🚀 Character Analysis Integration Test")

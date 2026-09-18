@@ -200,8 +200,7 @@ def show_project_structure():
     
     structure = """
 htmlParser/
-├── main.py                     # Original monolithic file (keep for now)
-├── main_refactored.py          # New modular main file
+├── main.py                     # Modular CLI entry point
 ├── requirements.txt
 ├── README.md
 ├── config/
@@ -244,4 +243,4 @@ if __name__ == "__main__":
     
     print("\n🎉 Migration framework is ready!")
     print("   You can now start using the new modular components.")
-    print("   Run 'python main_refactored.py --help' to see available commands.")
+    print("   Run 'python main.py --help' to see available commands.")

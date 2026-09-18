@@ -208,7 +208,7 @@ def test_cli_commands():
     import subprocess
     try:
         result = subprocess.run([
-            sys.executable, "main_refactored.py", "--help"
+            sys.executable, "main.py", "--help"
         ], capture_output=True, text=True, timeout=10)
         
         if result.returncode == 0:

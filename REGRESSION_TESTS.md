@@ -61,7 +61,7 @@ The regression test suite was created to ensure that previously fixed bugs remai
 
 **Files Affected:**
 - `media/media_utils.py`
-- `main_refactored.py`
+- `main.py`
 
 **Test File:** `tests/test_file_path_consistency.py`
 

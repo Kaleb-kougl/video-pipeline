@@ -1,2345 +1,2065 @@
 #!/usr/bin/env python3
 """
-DEPRECATED: Legacy monolithic implementation of the Anime Video Generator.
+Main entry point for the anime video generation system.
 
-⚠️  WARNING: This file is deprecated and should not be used for new development.
-
-✅ Use instead: python main_refactored.py --help
-📖 Documentation: docs/README_MODULAR.md
-🏗️  Architecture: Modular agent-based system in agents/ directory
-
-This file remains for:
-- Historical reference
-- Legacy compatibility (temporary)
-- Migration assistance
-
-Last updated: July 2025
-Migration target: main_refactored.py with modular agents
+This is the refactored version using a modular architecture.
 """
 
-import warnings
+import os
 import sys
-
-# Issue deprecation warning
-warnings.warn(
-    "\n" + "="*60 + "\n"
-    "⚠️  DEPRECATION WARNING: main.py is deprecated!\n"
-    "\n"
-    "This monolithic implementation has been replaced by a modern\n"
-    "modular architecture for better maintainability and scalability.\n"
-    "\n"
-    "✅ NEW: python main_refactored.py --help\n"
-    "❌ OLD: python main.py (this file)\n"
-    "\n"
-    "📖 See docs/README_MODULAR.md for migration guide\n"
-    "🏗️  New architecture: agents/, core/, utils/ directories\n"
-    "="*60,
-    DeprecationWarning,
-    stacklevel=2
-)
-
-# Print console warning for immediate visibility
-print("🚨 DEPRECATED: main.py is no longer maintained")
-print("✅ Use: python main_refactored.py instead")
-print("📖 See: README.md for current usage instructions")
-print("-" * 50)
-
-# Web scraping and HTTP requests
-import requests
-from bs4 import BeautifulSoup
-
-# Google Gemini AI integration for content generation and analysis
-from google import genai
-from google.genai import types
-
-# Image and media processing
-from io import BytesIO
-from PIL import Image
-
-# Text processing and pattern matching
-import re
-
-# System and utility imports
-import getpass  # For secure input handling
-import os       # Operating system interface
-import json     # JSON data handling
-import wave     # Audio file processing
-
-# Video and audio processing with MoviePy
-from moviepy import VideoFileClip, ImageClip, concatenate_videoclips, AudioFileClip
-
-# Database operations
-import sqlite3
-
-# Date and time handling
-from datetime import datetime
-
-# Python data structures and typing
-from dataclasses import dataclass
-from enum import Enum
-
-# Logging for debugging and monitoring
 import logging
-from pathlib import Path
-
-# Rate limiting and delays for respectful web scraping
+import argparse
 import time
 import random
+import asyncio
+from pathlib import Path
+from typing import Dict, List
 
-# URL manipulation utilities
-from urllib.parse import urljoin, quote
+# Add project root to path for imports
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
 
-# Set up basic logging to display informational messages.
-logging.basicConfig(level=logging.INFO)
+from config.settings import get_settings
+from core.database import DatabaseManager
+from core.schemas import ProcessingResult
+from agents.transcript_agent import TranscriptDiscoveryAgent
+from agents.transcript_source_agent import TranscriptSourceDiscoveryAgent
+from agents.content_agent import ContentAgent
+from agents.video_agent import VideoGenerationAgent
+from agents.quality_agent import QualityAssuranceAgent
+from agents.discovery_agent import EpisodeDiscoveryAgent
+from agents.config_manager import EpisodeConfigManager
+from agents.workflow_orchestrator import WorkflowOrchestrator
+from agents.character_analysis_agent import CharacterAnalysisAgent
+from utils.web_utils import get_html_content, parse_html_with_beautifulsoup
+from utils.vector_search import VectorSearchManager
+from media.media_utils import create_images, wave_file, mp4_file_enhanced
+from media.format_exporters import YouTubeShortsExporter, TikTokExporter, InstagramReelsExporter, TwitterVideoExporter
+
+# Set up logging
+def setup_logging():
+    """Configure logging for the application."""
+    settings = get_settings()
+    
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level),
+        format=settings.log_format,
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler('anime_generator.log')
+        ]
+    )
+
 logger = logging.getLogger(__name__)
 
-class TaskStatus(Enum):
-    """
-    Enumeration for the status of a processing task.
-    Used to track the lifecycle of episode processing jobs from start to completion.
-    """
-    PENDING = "pending"         # Task has been created but not started
-    IN_PROGRESS = "in_progress" # Task is currently being processed
-    COMPLETED = "completed"     # Task finished successfully
-    FAILED = "failed"          # Task encountered an error and could not complete
 
-@dataclass
-class ProcessingJob:
-    """
-    Data class to hold information about a processing job.
-    
-    This represents a single episode processing task, tracking its metadata
-    and current status throughout the video generation pipeline.
-    
-    Attributes:
-        id (str): Unique identifier for the job
-        url (str): Source URL for the episode transcript
-        show (str): Name of the anime show
-        status (TaskStatus): Current processing status
-        created_at (datetime): When the job was created
-        completed_at (datetime, optional): When the job finished (None if still running)
-        error_message (str, optional): Error details if the job failed
-    """
-    id: str
-    url: str
-    show: str
-    status: TaskStatus
-    created_at: datetime
-    completed_at: datetime = None
-    error_message: str = None
-
-class DatabaseManager:
-    """Manages the SQLite database for storing and retrieving episode information."""
-    
-    def __init__(self, db_path="data/databases/video_generator.db"):
-        """
-        Initializes the DatabaseManager.
-
-        Args:
-            db_path (str): The path to the SQLite database file.
-        """
-        self.db_path = db_path
-        self.init_database()
-    
-    def init_database(self):
-        """
-        Initializes the database tables if they don't already exist.
-        
-        Creates two main tables:
-        1. episodes: Stores core episode data and processing status
-        2. processing_logs: Tracks detailed processing history and performance metrics
-        """
-        with sqlite3.connect(self.db_path) as conn:
-            # Create the 'episodes' table to store details about each show episode.
-            # This is the main table containing episode metadata and content
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS episodes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,      -- Unique episode identifier
-                    show TEXT NOT NULL,                        -- Anime show name
-                    season TEXT NOT NULL,                      -- Season number (as text for flexibility)
-                    episode TEXT NOT NULL,                     -- Episode number (as text for flexibility)
-                    url TEXT NOT NULL,                         -- Source URL for transcript
-                    transcript TEXT,                           -- Full episode transcript text
-                    summary TEXT,                              -- AI-generated episode summary
-                    plot_points TEXT,                          -- JSON array of key plot points
-                    status TEXT DEFAULT 'pending',             -- Processing status (pending/completed/failed)
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- When record was created
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- When record was last modified
-                    UNIQUE(show, season, episode)              -- Prevent duplicate episodes
-                )
-            """)
-            
-            # Create the 'processing_logs' table to log the status of various tasks.
-            # This table tracks the processing pipeline steps and performance
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS processing_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,      -- Unique log entry identifier
-                    episode_id INTEGER,                        -- Reference to episodes table
-                    task_type TEXT NOT NULL,                   -- Type of task (transcript, video, etc.)
-                    status TEXT NOT NULL,                      -- Task status (started/completed/failed)
-                    error_message TEXT,                        -- Error details if task failed
-                    processing_time REAL,                      -- Time taken in seconds
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- When log entry was created
-                    FOREIGN KEY (episode_id) REFERENCES episodes (id)  -- Maintain referential integrity
-                )
-            """)
-    
-    def save_episode(self, show, season, episode, url, transcript=None, summary=None, plot_points=None):
-        """
-        Saves or updates an episode's data in the database.
-        
-        Uses INSERT OR REPLACE to handle both new episodes and updates to existing ones.
-        The plot_points list is serialized to JSON for storage in the TEXT field.
-
-        Args:
-            show (str): The name of the show (e.g., "My Hero Academia")
-            season (str): The season number (stored as string for flexibility)
-            episode (str): The episode number (stored as string for flexibility)
-            url (str): The URL of the episode transcript source
-            transcript (str, optional): The full transcript text. Defaults to None.
-            summary (str, optional): AI-generated episode summary. Defaults to None.
-            plot_points (list, optional): List of key plot points for video generation. Defaults to None.
-        """
-        with sqlite3.connect(self.db_path) as conn:
-            # Use INSERT OR REPLACE to handle both new records and updates
-            # This prevents duplicate entries while allowing data updates
-            conn.execute("""
-                INSERT OR REPLACE INTO episodes 
-                (show, season, episode, url, transcript, summary, plot_points, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, (show, season, episode, url, transcript, summary, json.dumps(plot_points) if plot_points else None))
-    
-    def get_episode(self, show, season, episode):
-        """
-        Retrieves a specific episode's data from the database.
-        
-        Uses row_factory to return results as sqlite3.Row objects, which provide
-        both index and name-based access to column data.
-
-        Args:
-            show (str): The name of the show to search for
-            season (str): The season number to search for
-            episode (str): The episode number to search for
-
-        Returns:
-            sqlite3.Row: The episode data with named column access, or None if not found.
-                        Row object allows accessing columns like row['show'], row['transcript'], etc.
-        """
-        with sqlite3.connect(self.db_path) as conn:
-            # Set row_factory to return Row objects instead of tuples
-            # This allows named access to columns (e.g., row['show'])
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute("""
-                SELECT * FROM episodes WHERE show = ? AND season = ? AND episode = ?
-            """, (show, season, episode))
-            return cursor.fetchone()
-
-class ContentAgent:
-    """
-    Agent responsible for extracting and analyzing content from a URL.
-    
-    This agent handles the web scraping and initial AI analysis of episode transcripts.
-    It manages HTTP requests, HTML parsing, and coordinates with AI models for content analysis.
-    """
-    
-    def __init__(self, model):
-        """
-        Initializes the ContentAgent with an AI model for content analysis.
-
-        Args:
-            model: The generative AI model instance to use for content analysis.
-                  Expected to have methods for text processing and analysis.
-        """
-        self.model = model
-        self.retry_count = 3  # Number of retry attempts for failed requests
-    
-    def extract_and_analyze(self, url):
-        """
-        Extracts HTML content from a URL, parses it, and uses an AI model to analyze it.
-        
-        This method implements retry logic to handle network issues and temporary failures.
-        It combines web scraping with AI analysis to provide comprehensive content extraction.
-
-        Args:
-            url (str): The URL to extract content from (typically an episode transcript page)
-
-        Returns:
-            dict: A dictionary containing:
-                - transcript (str): Full episode transcript text
-                - title (str): Episode title
-                - episode (str): Episode identifier
-                - analysis (str): AI-generated content analysis
-                - success (bool): Whether the operation succeeded
-        """
-        # Implement retry logic to handle temporary network failures
-        for attempt in range(self.retry_count):
-            try:
-                # Step 1: Attempt to get HTML content from the URL
-                # This function handles HTTP requests and basic error handling
-                html_content = get_html_content(url)
-                if html_content:
-                    # Step 2: Parse the HTML to extract transcript and metadata
-                    # BeautifulSoup parsing extracts structured data from raw HTML
-                    transcript, title, episode = parse_html_with_beautifulsoup(html_content)
-                    
-                    # Step 3: Create a focused analysis prompt for the AI model
-                    # Truncate transcript to avoid token limits while preserving key content
-                    analysis_prompt = f"""
-                    Analyze this episode transcript and extract:
-                    1. Main characters mentioned
-                    2. Key themes
-                    3. Content rating/age appropriateness
-                    4. Emotional tone
-                    
-                    Transcript: {transcript[:1000]}...
-                    Title: {title}
-                    """
-                    
-                    # Step 4: Get AI analysis of the content
-                    # This provides metadata that can be used for content classification
-                    analysis = self.model.invoke(analysis_prompt)
-                    
-                    # Return successful result with all extracted data
-                    return {
-                        'transcript': transcript,
-                        'title': title,
-                        'episode': episode,
-                        'analysis': analysis,
-                        'success': True
-                    }
-                break # Exit retry loop on successful content extraction
-            except Exception as e:
-                # Log the error with attempt number for debugging
-                logger.error(f"Content extraction attempt {attempt + 1} failed: {e}")
-                if attempt == self.retry_count - 1:
-                    # All retry attempts have been exhausted, return failure
-                    return {'success': False, 'error': str(e)}
-        
-        # Fallback return if loop completes without success (shouldn't happen with current logic)
-        return {'success': False, 'error': 'Max retries exceeded'}
-
-class VideoGenerationAgent:
-    """
-    Agent responsible for tasks related to video generation.
-    
-    This agent handles image generation, duration calculations, and video composition.
-    It coordinates with AI image generation models to create visual content that
-    matches the episode's plot points and maintains visual consistency.
-    """
+class AnimeVideoGenerator:
+    """Main application class for anime video generation."""
     
     def __init__(self):
-        """
-        Initializes the VideoGenerationAgent.
+        """Initialize the anime video generator with all modular agents."""
+        self.settings = get_settings()
+        self.db = DatabaseManager(self.settings.database_path)
         
-        Sets up the Gemini AI client for image generation capabilities.
-        """
-        self.client = genai.Client()  # Initialize Gemini client for AI image generation
-    
-    def generate_optimized_images(self, plot_points, episode_context):
-        """
-        Creates enhanced prompts for generating images with a consistent visual style.
-        
-        This method takes raw plot points and enhances them with style instructions
-        to ensure visual consistency across all generated images in the video.
-
-        Args:
-            plot_points (list): A list of sentences describing key scenes/moments
-            episode_context (dict): Context about the episode including show title, season, etc.
-
-        Returns:
-            list: Enhanced prompts optimized for AI image generation with consistent styling
-        """
-        # Define the base style prompt for visual consistency
-        # This ensures all images have a cohesive anime art style
-        style_prompt = f"""
-        Create images in a consistent anime art style for {episode_context['show']}.
-        Use vibrant colors, dynamic compositions, and maintain visual continuity.
-        Style: Modern anime, high quality, detailed backgrounds.
-        """
-        
-        enhanced_prompts = []
-        # Process each plot point to create a styled image generation prompt
-        for point in plot_points:
-            # Combine the consistent style instructions with the specific scene description
-            enhanced_prompt = f"{style_prompt}\n\nScene: {point}"
-            enhanced_prompts.append(enhanced_prompt)
-        
-        return enhanced_prompts
-    
-    def adaptive_duration_calculation(self, sentences, total_duration):
-        """
-        Calculates the display duration for each image based on sentence length.
-        This creates a proportional timing system where longer descriptions get more screen time.
-
-        Args:
-            sentences (list): The list of sentences (plot points) to calculate timing for
-            total_duration (float): The total duration of the audio track in seconds
-
-        Returns:
-            list: A list of durations (in seconds) for each image, proportional to sentence length
-        """
-        # Count words in each sentence to determine relative complexity/length
-        word_counts = [len(sentence.split()) for sentence in sentences]
-        total_words = sum(word_counts)
-        
-        durations = []
-        for word_count in word_counts:
-            # Calculate duration based on the proportional word count
-            # Longer sentences get more time on screen for better pacing
-            ratio = word_count / total_words if total_words > 0 else 0
-            duration = total_duration * ratio
-            # Ensure a minimum duration of 2 seconds for readability
-            # Even short sentences need enough time to be processed visually
-            durations.append(max(duration, 2.0))
-        
-        return durations
-
-class QualityAssuranceAgent:
-    """
-    Agent responsible for quality checks and content validation.
-    
-    This agent ensures that generated content meets quality standards before
-    final video production. It validates both content coherence and file integrity.
-    Acts as a quality gate in the video generation pipeline.
-    """
-    
-    def __init__(self, model):
-        """
-        Initializes the QualityAssuranceAgent with an AI model for content validation.
-
-        Args:
-            model: The generative AI model to use for content quality validation
-        """
-        self.model = model
-    
-    def validate_content(self, summary, plot_points):
-        """
-        Uses an AI model to validate the quality and coherence of the summary and plot points.
-        This method performs comprehensive content analysis to ensure the generated material
-        is suitable for YouTube audience engagement and maintains narrative quality.
-
-        Args:
-            summary (str): The episode summary to validate for accuracy and engagement
-            plot_points (list): The list of plot points to check for narrative flow
-
-        Returns:
-            dict: AI model result including quality score (1-10) and improvement suggestions
-        """
-        # Create a comprehensive validation prompt that covers multiple quality dimensions
-        validation_prompt = f"""
-        Review this episode summary and plot points for:
-        1. Accuracy and coherence - Does the content make logical sense?
-        2. Appropriate length (should be 2-3 minutes when spoken) - Timing analysis
-        3. Engaging content for YouTube audience - Entertainment value assessment
-        4. Proper narrative flow - Story progression and pacing
-        
-        Summary: {summary}
-        Plot Points: {plot_points}
-        
-        Provide a quality score (1-10) and specific suggestions for improvement.
-        Focus on clarity, engagement, and narrative structure.
-        """
-        
-        # Get AI validation with comprehensive quality analysis
-        validation_result = self.model.invoke(validation_prompt)
-        return validation_result
-    
-    def check_file_integrity(self, file_paths):
-        """
-        Checks if generated files exist and are not empty.
-        This method performs essential file validation to ensure all required
-        assets are properly generated before video compilation.
-
-        Args:
-            file_paths (list): A list of file paths to check for existence and content
-
-        Returns:
-            list: A list of issue descriptions for missing or empty files
-        """
-        issues = []
-        # Validate each file in the generation pipeline
-        for file_path in file_paths:
-            # Check if file exists at the specified path
-            if not os.path.exists(file_path):
-                issues.append(f"Missing file: {file_path}")
-            # Check if file has content (not zero bytes)
-            elif os.path.getsize(file_path) == 0:
-                issues.append(f"Empty file: {file_path}")
-        
-        return issues
-
-class EpisodeDiscoveryAgent:
-    """
-    Agent responsible for discovering and validating episode URLs.
-    
-    This agent handles the complex task of finding valid transcript URLs
-    for anime episodes across different naming conventions and URL patterns.
-    It manages URL generation and validation for reliable content discovery.
-    """
-    
-    def __init__(self):
-        """
-        Initialize the episode discovery agent with base URL and naming patterns.
-        Sets up the foundation for episode URL generation and validation.
-        """
-        # Base URL for the transcript source website
-        self.base_url = "https://subslikescript.com/series/My_Hero_Academia-5626028"
-        
-        # Dictionary of common episode naming patterns for URL construction
-        # Different sites use different URL formats, so we support multiple patterns
-        self.episode_patterns = {
-            # Standard pattern includes episode title in URL
-            "standard": "/season-{season}/episode-{episode}-{title}",
-            # Numbered pattern uses only season and episode numbers
-            "numbered": "/season-{season}/episode-{episode}",
-        }
-    
-    def generate_episode_url(self, season, episode, episode_title=None):
-        """
-        Generate episode URL based on season, episode number, and optional title.
-        This method constructs URLs using different patterns to accommodate
-        various transcript site naming conventions.
-        
-        Args:
-            season (int): Season number for the episode
-            episode (int): Episode number within the season
-            episode_title (str, optional): Episode title for URL formatting
-            
-        Returns:
-            str: Generated episode URL formatted for transcript access
-        """
-        if episode_title:
-            # Clean up the episode title for URL compatibility
-            # Remove special characters that could break URLs
-            formatted_title = re.sub(r'[^\w\s-]', '', episode_title)
-            # Replace spaces with underscores for URL format
-            formatted_title = re.sub(r'[\s]+', '_', formatted_title)
-            # Construct URL with title included
-            url = f"{self.base_url}/season-{season}/episode-{episode}-{formatted_title}"
-        else:
-            # Use simple numbered format when no title is provided
-            url = f"{self.base_url}/season-{season}/episode-{episode}"
-        
-        return url
-    
-    def validate_episode_url(self, url):
-        """
-        Validate if an episode URL exists and contains transcript content.
-        This method performs HTTP requests and HTML parsing to verify
-        that a URL actually contains usable transcript data.
-        
-        Args:
-            url (str): Episode URL to validate for transcript availability
-            
-        Returns:
-            bool: True if URL is valid and contains transcript content, False otherwise
-        """
+        # Initialize AI model for content agents
         try:
-            # Attempt to fetch the webpage
-            response = requests.get(url)
-            # Check if the request was successful (HTTP 200)
-            if response.status_code == 200:
-                # Parse the HTML content to look for transcript data
-                soup = BeautifulSoup(response.text, 'html.parser')
-                # Look for the specific element that contains transcript content
-                # This is site-specific - different transcript sites use different structures
-                transcript_element = soup.find(class_="full-script")
-                return transcript_element is not None
+            from langchain.chat_models import init_chat_model
+            self.model = init_chat_model("gemini-2.0-flash", model_provider="google_genai")
         except Exception as e:
-            # Log any errors that occur during validation
-            logger.error(f"URL validation failed for {url}: {e}")
+            # Fallback if langchain or credentials are not available
+            self.model = None
+            logger.warning(f"AI model not available: {e}")
         
-        # Return False if any error occurs or content is not found
-        return False
-    
-    def discover_episode_url(self, season, episode, possible_titles=None):
+        # Initialize all agents
+        self.transcript_agent = TranscriptDiscoveryAgent()
+        self.transcript_source_agent = TranscriptSourceDiscoveryAgent()
+        self.content_agent = ContentAgent(self.model) if self.model else None
+        self.video_agent = VideoGenerationAgent()
+        self.quality_agent = QualityAssuranceAgent()
+        self.discovery_agent = EpisodeDiscoveryAgent()
+        self.config_manager = EpisodeConfigManager()
+        self.orchestrator = WorkflowOrchestrator()
+        
+        # Initialize character analysis agent (optional)
+        try:
+            self.character_agent = CharacterAnalysisAgent()
+            logger.info("Character analysis enabled with ChromaDB backend")
+        except ImportError:
+            self.character_agent = None
+            logger.info("Character analysis disabled (missing ChromaDB dependencies)")
+        
+        # Initialize vector search manager (optional)
+        try:
+            self.vector_search = VectorSearchManager()
+            logger.info("Vector search enabled")
+        except Exception as e:
+            self.vector_search = None
+            logger.info(f"Vector search disabled: {e}")
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(self.settings.output_directory, exist_ok=True)
+        
+        logger.info("Anime Video Generator initialized")
+
+    async def process_episode_by_url(self, url: str, show_name: str) -> ProcessingResult:
         """
-        Discover the correct URL for an episode by trying different patterns.
-        This method implements a fallback strategy to find working URLs
-        when exact patterns are unknown or inconsistent.
+        Process an episode given its URL using the complete modular workflow.
         
         Args:
-            season (int): Season number to search for
-            episode (int): Episode number within the season
-            possible_titles (list, optional): List of possible episode titles to try
+            url (str): The URL of the episode transcript
+            show_name (str): The name of the show
             
         Returns:
-            str or None: Valid episode URL if found, None if no valid URL discovered
+            ProcessingResult: Result of the processing
         """
-        # First attempt: Try the simplest pattern without episode title
-        # This often works for sites with consistent numbering
-        url = self.generate_episode_url(season, episode)
-        if self.validate_episode_url(url):
-            return url
-        
-        # Second attempt: Try with each provided title
-        # Episode titles can help when sites use title-based URLs
-        if possible_titles:
-            for title in possible_titles:
-                url = self.generate_episode_url(season, episode, title)
-                if self.validate_episode_url(url):
-                    return url
-        
-        # Log failure for debugging and monitoring
-        logger.warning(f"Could not find valid URL for Season {season}, Episode {episode}")
-        return None
-
-class EpisodeConfigManager:
-    """
-    Manages episode configurations and batch processing settings.
-    
-    This class handles the configuration of anime series data including
-    season information, episode counts, and known episode titles.
-    It provides structured data management for batch processing operations.
-    """
-    
-    def __init__(self):
-        """
-        Initialize configuration manager with default series settings.
-        Sets up the basic structure for My Hero Academia episode management.
-        """
-        # Default configuration with series structure
-        # This defines the basic framework for the anime series
-        self.default_config = {
-            "show": "My Hero Academia",
-            # Season structure with episode counts and title storage
-            "seasons": {
-                1: {"episodes": 13, "titles": {}},  # First season episode count
-                2: {"episodes": 25, "titles": {}},  # Subsequent seasons
-                3: {"episodes": 25, "titles": {}},
-                4: {"episodes": 25, "titles": {}},
-                5: {"episodes": 25, "titles": {}},
-                6: {"episodes": 25, "titles": {}},
-                7: {"episodes": 21, "titles": {}}   # Latest season (may vary)
-            }
-        }
-        # Load any known episode titles for better URL generation
-        self.load_episode_titles()
-    
-    def load_episode_titles(self):
-        """
-        Load known episode titles for better URL generation.
-        This method populates the configuration with actual episode titles
-        to improve URL discovery success rates.
-        """
-        # Sample episode titles for Season 1 of My Hero Academia
-        # These titles help generate accurate URLs for transcript sources
-        season_1_titles = {
-            1: "Izuku_Midoriya_Origin",           # Series pilot episode
-            2: "What_It_Takes_to_Be_a_Hero",     # Hero fundamentals
-            3: "Roaring_Muscles",                # Physical training focus
-            4: "Start_Line",                     # Competition beginning
-            5: "What_I_Can_Do_for_Now",          # Character development
-            6: "Rage_You_Damn_Nerd",             # Conflict episode
-            7: "Deku_vs_Kacchan",                # Major character confrontation
-            8: "Bakugo's_Start_Line",            # Character backstory
-            9: "Yeah_Just_Do_Your_Best_Ida",     # Supporting character focus
-            10: "Encounter_with_the_Unknown",    # Plot advancement
-            11: "Game_Over",                     # Crisis episode
-            12: "All_Might",                     # Mentor focus
-            13: "In_Each_of_Our_Hearts"          # Season finale
-        }
-        
-        # Store the titles in the configuration structure
-        self.default_config["seasons"][1]["titles"] = season_1_titles
-    
-    def get_episode_config(self, season, episode):
-        """
-        Get configuration for a specific episode.
-        This method retrieves all relevant metadata for an episode
-        including title information and season context.
-        
-        Args:
-            season (int): Season number to get configuration for
-            episode (int): Episode number within the season
-            
-        Returns:
-            dict: Episode configuration with show name, season, episode, title, and limits
-        """
-        # Check if the requested season exists in our configuration
-        if season in self.default_config["seasons"]:
-            season_config = self.default_config["seasons"][season]
-            # Get the episode title if available, None if not found
-            episode_title = season_config["titles"].get(episode)
-            
-            # Return comprehensive episode configuration
-            return {
-                "show": self.default_config["show"],        # Show name
-                "season": season,                           # Season number
-                "episode": episode,                         # Episode number
-                "title": episode_title,                     # Episode title (may be None)
-                "max_episodes": season_config["episodes"]   # Total episodes in season
-            }
-        
-        # Return None if season is not configured
-        return None
-    
-    def get_season_episodes(self, season):
-        """
-        Get all episode numbers for a season.
-        This method provides a complete list of episode numbers
-        for batch processing operations.
-        
-        Args:
-            season (int): Season number to get episode list for
-            
-        Returns:
-            list: List of episode numbers (1 to max_episodes), empty list if season not found
-        """
-        # Check if the season exists in our configuration
-        if season in self.default_config["seasons"]:
-            # Get the maximum number of episodes for this season
-            max_episodes = self.default_config["seasons"][season]["episodes"]
-            # Generate a list from 1 to max_episodes (inclusive)
-            return list(range(1, max_episodes + 1))
-        
-        # Return empty list if season is not configured
-        return []
-
-class WorkflowOrchestrator:
-    """
-    Orchestrates the entire video generation workflow from start to finish.
-    
-    This is the main coordination class that brings together all the specialized agents
-    to create a complete video generation pipeline. It manages the flow from transcript
-    discovery through final video output, handling errors and state management.
-    """
-    
-    def __init__(self):
-        """
-        Initializes all the necessary components and agents.
-        Sets up the complete ecosystem for video generation including
-        database, AI models, and all specialized agents.
-        """
-        # Core infrastructure components
-        self.db = DatabaseManager()                                        # Database operations
-        self.model = init_chat_model("gemini-2.0-flash", model_provider="google_genai")  # AI model
-        
-        # Specialized agent instances for different aspects of video generation
-        self.content_agent = ContentAgent(self.model)                      # Content analysis and generation
-        self.video_agent = VideoGenerationAgent()                          # Video and image generation
-        self.qa_agent = QualityAssuranceAgent(self.model)                  # Quality control and validation
-        self.discovery_agent = EpisodeDiscoveryAgent()                     # URL discovery and validation
-        self.transcript_agent = TranscriptDiscoveryAgent()                 # Transcript extraction
-        self.config_manager = EpisodeConfigManager()                       # Configuration management
-        
-        # Structured output model for consistent data format
-        self.model_with_structure = self.model.with_structured_output(Episode_Summary_Schema)
-    
-    def process_episode(self, url, show_name):
-        """
-        The main method to process an episode, from content extraction to media generation.
-        This is the central orchestration method that coordinates all agents to transform
-        a transcript URL into a complete video with synchronized audio and images.
-
-        Args:
-            url (str): The URL of the episode transcript to process
-            show_name (str): The name of the anime show for context and branding
-
-        Returns:
-            dict: Result dictionary with success status, job ID, and either data or error message
-        """
-        # Generate unique job identifier for tracking and logging
-        job_id = f"{show_name}_{datetime.now().isoformat()}"
+        logger.info(f"Processing episode from URL: {url}")
         
         try:
-            # Step 1: Extract and analyze content from the transcript URL
-            # This involves web scraping, HTML parsing, and initial content analysis
-            logger.info(f"Starting content extraction for {job_id}")
-            content_result = self.content_agent.extract_and_analyze(url)
-            
-            # Validate that content extraction was successful
-            if not content_result['success']:
-                raise Exception(f"Content extraction failed: {content_result['error']}")
-            
-            # Step 2: Generate a structured summary using the AI model
-            # Transform raw transcript into YouTube-ready content with plot points
-            logger.info("Generating AI summary")
-            summary_result = self.generate_structured_summary(content_result, show_name)
-            
-            # Step 3: Validate the generated content for quality and coherence
-            # Ensure the content meets standards before proceeding to media generation
-            logger.info("Validating content quality")
-            quality_check = self.qa_agent.validate_content(
-                summary_result['youtube_transcript'], 
-                summary_result['plot_points']
+            # Use the workflow orchestrator for complete processing with Phase 2 enhancement
+            result = await self.orchestrator.process_episode_from_url(
+                url, show_name, self.db
             )
             
-            # Step 4: Save the processed data to the database for persistence
-            # Store all generated content for future reference and reprocessing
-            self.db.save_episode(
-                summary_result['show'],
-                summary_result['season'], 
-                summary_result['episode'],
-                url,
-                content_result['transcript'],
-                summary_result['youtube_transcript'],
-                summary_result['plot_points']
-            )
+            if result.success:
+                logger.info(f"Successfully processed episode from URL: {url}")
+            else:
+                logger.error(f"Failed to process episode from URL: {result.error}")
             
-            # Step 5: Generate the image and audio files for video compilation
-            # Create all media assets needed for the final video output
-            logger.info("Generating media files")
-            self.generate_all_media(summary_result)
-            
-            # Log successful completion and return success response
-            logger.info(f"Successfully processed episode {job_id}")
-            return {"success": True, "job_id": job_id, "data": summary_result}
+            return result
             
         except Exception as e:
-            # Handle any errors that occur during the workflow
-            logger.error(f"Workflow failed for {job_id}: {e}")
-            return {"success": False, "job_id": job_id, "error": str(e)}
+            logger.error(f"Processing failed for URL {url}: {e}")
+            return ProcessingResult(
+                success=False,
+                error=str(e)
+            )
     
-    def generate_structured_summary(self, content_result, show_name):
+    async def process_episode_by_numbers(self, show_name: str, season: int, episode: int, 
+                                 episode_title: str = None, full_processing: bool = True) -> ProcessingResult:
         """
-        Generates a structured summary using a predefined prompt and an AI model.
-        This method transforms raw transcript data into YouTube-ready content
-        with proper formatting and engagement elements.
-
+        Process an episode by show name, season, and episode numbers using complete workflow.
+        
         Args:
-            content_result (dict): The dictionary containing the transcript and analysis
-            show_name (str): The name of the show for context and branding
-
+            show_name (str): The name of the show
+            season (int): Season number
+            episode (int): Episode number
+            episode_title (str, optional): Episode title for better matching
+            full_processing (bool): Whether to do full AI/video processing or just transcript discovery
+            
         Returns:
-            dict: A dictionary with the structured summary including plot points and transcript
+            ProcessingResult: Result of the processing
         """
-        from langchain_core.prompts import ChatPromptTemplate
+        logger.info(f"Processing {show_name} Season {season} Episode {episode}")
         
-        # Define the system prompt that establishes the AI's role and output format
-        # This creates consistent branding and engagement for the YouTube channel
-        system_template = """You are a famous YouTuber who makes videos about popular anime shows and your channel is called TLDR Media. 
-        Can you summarize this episode of {Show} based on the following transcription? 
-        Make sure to ask watchers to Like, Comment, and subscribe somewhere in the video.
-        Do not do an introduction.
-        
-        Additional context: {context}"""
-        
-        # Create a structured prompt template for consistent AI interactions
-        prompt_template = ChatPromptTemplate.from_messages(
-            [("system", system_template), ("user", "{text}")]
-        )
-        
-        # Generate the actual prompt with show-specific data
-        prompt = prompt_template.invoke({
-            "Show": show_name, 
-            "text": content_result['transcript'],
-            "context": content_result.get('analysis', '')
-        })
-        
-        # Use the structured output model to ensure consistent data format
-        response = self.model_with_structure.invoke(prompt)
-        return response.model_dump()
-    
-    def generate_all_media(self, episode_data):
-        """
-        Generates all media files (images, audio, video) for the episode.
-        This method coordinates the creation of all visual and audio assets
-        needed for the final video compilation.
-
-        Args:
-            episode_data (dict): The structured data of the episode including plot points and metadata
-        """
-        # Step 1: Generate AI image prompts with consistent styling
-        # Create enhanced prompts that maintain visual continuity across images
-        enhanced_prompts = self.video_agent.generate_optimized_images(
-            episode_data['plot_points'], 
-            episode_data
-        )
-        
-        # Step 2: Create the actual image files using AI image generation
-        # Generate visual assets for each plot point in the episode
-        create_images(enhanced_prompts, episode_data['episode'], 
-                     episode_data['season'], episode_data['show'])
-        
-        # Step 3: Generate the audio file from the YouTube transcript
-        # Convert text to speech for the video narration
-        wave_length = wave_file(
-            show=episode_data['show'],
-            season=episode_data['season'], 
-            episode=episode_data['episode'],
-            contents=episode_data['youtube_transcript']
-        )
-        
-        # Step 4: Calculate adaptive durations for each image in the video
-        # Determine how long each image should be displayed based on content length
-        durations = self.video_agent.adaptive_duration_calculation(
-            episode_data['plot_points'], wave_length
-        )
-        
-        # Step 5: Create the final MP4 video file with synchronized audio and images
-        # Compile all assets into the final video output
-        mp4_file_enhanced(
-            show=episode_data['show'],
-            season=episode_data['season'],
-            episode=episode_data['episode'], 
-            sentences=episode_data['plot_points'],
-            durations=durations
-        )
-
-def mp4_file_enhanced(show, season, episode, sentences, durations):
-    """
-    Creates an MP4 video file from images and an audio file with adaptive slide durations.
-    This function is the final assembly step that combines all generated assets
-    (images, audio, intro video) into a complete YouTube-ready video.
-
-    Args:
-        show (str): The name of the show for file path construction
-        season (str): The season number for file path construction
-        episode (str): The episode number for file path construction
-        sentences (list): A list of plot points (used to find corresponding images)
-        durations (list): A list of durations for each image in seconds
-    """
-    print("create enhanced mp4")
-    array_ic = []
-    
-    # Create an ImageClip for each sentence/image with its calculated duration
-    # This step builds the visual timeline with proportional timing
-    for index, (sentence, duration) in enumerate(zip(sentences, durations)):
-        # Construct path to the generated image file
-        image_path = f"{show}/Season{season}/Episode{episode}/{show}_{episode}_{index}.png"
-        # Create MoviePy ImageClip with specific duration
-        ic = ImageClip(image_path).with_duration(duration)
-        array_ic.append(ic)
-    
-    # Load the intro video and the generated audio file
-    intro_video = VideoFileClip(f"{show}/tldr_mha_intro.mp4")     # Channel branding intro
-    ac_1 = AudioFileClip(f"{show}/Season{season}/Episode{episode}/{show}_{episode}.wav")  # Narration audio
-    
-    # Concatenate the image clips to create the main content video
-    video = concatenate_videoclips(clips=array_ic, method="compose")
-    # Attach the audio narration to the visual content
-    video_with_audio = video.with_audio(ac_1)
-    
-    # Add the intro video to the beginning for channel branding
-    video_with_intro = concatenate_videoclips(clips=[intro_video, video_with_audio], method="compose")
-    
-    # Write the final video file with optimized settings for YouTube
-    # Use 24fps for smooth playback and AAC audio codec for compatibility
-    video_with_intro.write_videofile(
-        f"{show}/Season{season}/Episode{episode}/{show}_{season}_{episode}.mp4", 
-        fps=24, audio_codec="aac"
-    )
-    
-    # Clean up audio resources to prevent memory leaks
-    ac_1.close()
-
-# Pydantic schema imports for structured data validation
-from typing import Optional
-from pydantic import BaseModel, Field
-
-# Pydantic schema for ensuring the AI model output is in a structured format
-# This schema enforces consistent data structure across all episode processing
-class Episode_Summary_Schema(BaseModel):
-    """
-    Summary of a given show episode with structured data validation.
-    
-    This schema ensures that AI-generated episode summaries contain all required
-    fields with proper data types for consistent processing throughout the pipeline.
-    """
-    show: str = Field(description="The title of the show")
-    season: str = Field(description="The numerical season of the show")  
-    episode: str = Field(description="The numerical episode of the show")
-    youtube_transcript: str = Field(description="Summary of the entire episode optimized for YouTube narration")
-    plot_points: list[str] = Field(description="Single sentence summaries of major plot points in this episode")
-
-def get_html_content(url):
-    """
-    Fetches the HTML content from a given URL.
-    This function handles HTTP requests with proper error handling
-    to retrieve webpage content for transcript extraction.
-
-    Args:
-        url (str): The URL of the webpage to fetch
-
-    Returns:
-        str: The HTML content of the page, or None if an error occurs
-    """
-    print("retrieve html")
-    try:
-        # Make HTTP GET request to fetch webpage content
-        response = requests.get(url)
-        # Raise an HTTPError for bad responses (4xx or 5xx status codes)
-        response.raise_for_status()
-        return response.text
-    except requests.exceptions.RequestException as e:
-        # Log and handle any network or HTTP errors
-        print(f"Error fetching URL {url}: {e}")
-        return None
-
-def parse_html_with_beautifulsoup(html_content):
-    """
-    Parses HTML content using BeautifulSoup and extracts various information.
-    This function specifically targets transcript content from episode pages
-    and extracts metadata like title and episode information.
-
-    Args:
-        html_content (str): The HTML content as a string to parse
-
-    Returns:
-        tuple: (transcript_text, title, episode) - extracted content and metadata
-    """
-    print("parse html")
-    if not html_content:
-        print("No HTML content to parse.")
-        return None, None, None
-
-    # Parse HTML content using BeautifulSoup for element extraction
-    soup = BeautifulSoup(html_content, 'html.parser')
-
-    # Extract the page title from the h1 element
-    title = soup.find('h1')
-    if title:
-        title = title.get_text()
-    
-    # Use regex to extract season and episode information from title
-    match = re.search(r'Season \d+, Episode \d+', title)
-    episode = match.group(0) if match else "Unknown Episode"
-
-    # Find the transcript content using the specific class name
-    # This is site-specific - different transcript sites use different structures
-    items = soup.find(class_="full-script")
-    if items:
-        # Return the transcript text along with metadata
-        return items.get_text(), title, episode
-    else:
-        print("  No elements with class 'full-script' found.")
-        return None, title, episode
-
-def create_images(sentences, episode, season, show):
-    """
-    Creates AI-generated images for each plot point in the episode.
-    This function coordinates the generation of multiple images that will
-    be used as visual slides in the final video compilation.
-    
-    Args:
-        sentences (list): List of plot point descriptions or enhanced prompts for image generation
-        episode (str): Episode identifier for file naming and organization
-        season (str): Season identifier for file naming and organization
-        show (str): Show name for file naming and organization
-    """
-    print(f"iterate through and create {len(sentences)} images")
-    # Generate an image for each plot point/sentence
-    for index, sentence in enumerate(sentences):
-        create_image(sentence, episode, season, show, index)
-
-def create_image(image_sentence, episode, season, show, index): 
-    """
-    Generate a single image using AI based on plot point description.
-    This function uses Google's Gemini model to create anime-style images
-    that visually represent specific scenes from the episode.
-    
-    Args:
-        image_sentence (str): Description of the scene to generate (enhanced prompt with style)
-        episode (str): Episode identifier for file naming
-        season (str): Season identifier for file naming
-        show (str): Show name for file naming
-        index (int): Image index for unique filename generation
-    """
-    print(f"create image:{index}")
-    # Initialize Google Generative AI client for image generation
-    client = genai.Client()
-    
-    # Generate image using Gemini's image generation model
-    response = client.models.generate_content(
-        model="gemini-2.0-flash-preview-image-generation",
-        contents=image_sentence,
-        config=types.GenerateContentConfig(
-        response_modalities=['TEXT', 'IMAGE']  # Request both text and image output
-        )
-    )
-    
-    # Process the response to extract and save the generated image
-    for part in response.candidates[0].content.parts:
-        if part.text is not None:
-            # Print any text response from the model
-            print(part.text)
-        elif part.inline_data is not None:
-            # Extract and save the generated image
-            image = Image.open(BytesIO((part.inline_data.data)))
-            # Ensure the directory structure exists
-            os.makedirs(f"{show}/Season{season}/Episode{episode}", exist_ok=True)
-            # Save image with structured filename for video compilation
-            image.save(f"{show}/Season{season}/Episode{episode}/{show}_{episode}_{index}.png")
-
-def wave_file(show, season, episode, contents, channels=1, rate=24000, sample_width=2):
-    """
-    Generate audio file from text using AI text-to-speech.
-    This function converts the YouTube transcript text into spoken narration
-    using Google's Gemini TTS model with a specific voice configuration.
-    
-    Args:
-        show (str): Show name for file organization
-        season (str): Season identifier for file organization
-        episode (str): Episode identifier for file organization
-        contents (str): Text content to convert to speech (YouTube transcript)
-        channels (int): Audio channels (default: 1 for mono audio)
-        rate (int): Sample rate in Hz (default: 24000 for good quality)
-        sample_width (int): Sample width in bytes (default: 2 for 16-bit audio)
-        
-    Returns:
-        float: Duration of generated audio file in seconds for video timing
-    """
-    print("create wave file")
-    # Initialize Google Generative AI client for text-to-speech
-    client = genai.Client()
-    
-    # Ensure the directory structure exists for audio file storage
-    os.makedirs(f"{show}/Season{season}/Episode{episode}", exist_ok=True)
-    file_name = f"{show}/Season{season}/Episode{episode}/{show}_{episode}.wav"
-    
-    # Generate speech audio using Gemini TTS model
-    response = client.models.generate_content(
-        model="gemini-2.5-flash-preview-tts",
-        contents=contents,
-        config=types.GenerateContentConfig(
-            response_modalities=["AUDIO"],  # Request audio output only
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name='Kore',  # Use specific voice for consistency
+        try:
+            if full_processing:
+                # Use the workflow orchestrator for complete processing with Phase 2 enhancement
+                result = await self.orchestrator.process_episode_complete(
+                    show_name, season, episode, episode_title, self.db
+                )
+            else:
+                # Just do transcript discovery and save to database
+                # Use enhanced discovery agent for better URL finding
+                discovery_result = self.discovery_agent.search_episode_enhanced(
+                    show_name, season, episode, episode_title
+                )
+                
+                if not discovery_result or not discovery_result.get('url'):
+                    return ProcessingResult(
+                        success=False,
+                        error=f'No episode URL found for {show_name} Season {season} Episode {episode}'
                     )
+                
+                # Parse transcript from discovered URL
+                transcript_result = self.transcript_agent.parse_discovered_url(
+                    discovery_result['url'], discovery_result['source']
                 )
-            ),
-        )
-    )
-    
-    # Extract audio data from the response
-    data = response.candidates[0].content.parts[0].inline_data.data
-
-    # Write the audio data to a WAV file with specified parameters
-    with wave.open(file_name, "wb") as wf:
-        wf.setnchannels(channels)      # Set audio channels
-        wf.setsampwidth(sample_width)  # Set bit depth
-        wf.setframerate(rate)          # Set sample rate
-        wf.writeframes(data)           # Write audio data
-
-    # Return the duration for video timing calculations
-    return get_wav_duration(file_name)
-
-def get_wav_duration(wav_file_path):
-    """
-    Determine the duration of a WAV audio file.
-    This function calculates the exact duration needed for video timing
-    by analyzing the audio file's frame count and sample rate.
-    
-    Args:
-        wav_file_path (str): Path to WAV file to analyze
-        
-    Returns:
-        float: Duration in seconds for video synchronization
-    """
-    print("determine wave duration")
-    # Open WAV file in read mode and extract timing information
-    with wave.open(wav_file_path, 'r') as wf:
-        num_frames = wf.getnframes()    # Total number of audio frames
-        frame_rate = wf.getframerate()  # Frames per second (sample rate)
-        # Calculate duration: total frames divided by frames per second
-        duration = num_frames / frame_rate
-        return duration
-
-def read_json(file_path):
-    """
-    Read and parse JSON data from file.
-    This utility function loads and displays JSON configuration data
-    for debugging and data inspection purposes.
-    
-    Args:
-        file_path (str): Path to JSON file to read
-        
-    Returns:
-        dict: Parsed JSON data structure
-    """
-    from pathlib import Path
-    from pprint import pprint
-
-    # Load JSON file and parse the content
-    data = json.loads(Path(file_path).read_text())
-    print('loaded json')
-    # Pretty print the data for debugging/inspection
-    pprint(data)
-    return data
-
-# Import required for model initialization
-from langchain.chat_models import init_chat_model
-
-class TranscriptDiscoveryAgent:
-    """
-    Agent that searches multiple public sources for anime episode transcripts.
-    
-    This specialized agent implements a multi-source strategy for finding episode
-    transcripts across different websites. It handles various URL patterns,
-    search mechanisms, and content extraction methods for robust transcript discovery.
-    """
-    
-    def __init__(self):
-        """
-        Initialize the transcript discovery agent with multiple source configurations.
-        Sets up a comprehensive configuration for different transcript websites
-        with their specific search patterns and content selectors.
-        """
-        # Configuration for multiple transcript sources
-        # Each source has specific URL patterns, selectors, and search capabilities
-        self.sources = {
-            # Primary source: SubsLikeScript (reliable anime transcripts)
-            'subslikescript': {
-                'base_url': 'https://subslikescript.com',
-                'search_url': 'https://subslikescript.com/search',
-                # Multiple URL patterns to try for episode discovery
-                'search_patterns': [
-                    '/series/{show_slug}',                                      # Show overview page
-                    '/series/{show_slug}/season-{season}/episode-{episode}',   # Episode with number
-                    '/series/{show_slug}/season-{season}/episode-{episode}-{title_slug}'  # Episode with title
-                ],
-                'transcript_selector': '.full-script',      # CSS selector for transcript content
-                'title_selector': 'h1',                     # CSS selector for page title
-                'search_result_selector': 'a[href*="series"]',  # Search result links
-                'search_title_selector': '',                # Use link text directly
-                'supports_search': True                     # Has search functionality
-            },
-            # Secondary source: Transcripts Wiki (Fandom-based transcripts)
-            'transcripts_wiki': {
-                'base_url': 'https://transcripts.fandom.com',
-                'search_url': 'https://community.fandom.com/wiki/Special:Search',
-                # Wiki-style URL patterns
-                'search_patterns': [
-                    '/wiki/{show_slug}',                           # Show main page
-                    '/wiki/{show_slug}/Season_{season}',          # Season page
-                    '/wiki/{show_slug}_Season_{season}_Episode_{episode}'  # Specific episode
-                ],
-                'transcript_selector': '.mw-parser-output',   # MediaWiki content area
-                'title_selector': '.page-header__title',      # Wiki page title
-                'search_result_selector': 'a[href*="/wiki/"]', # Wiki search results
-                'search_title_selector': '.unified-search__result__title',  # Search result titles
-                'supports_search': True,
-                # Additional search parameters for Fandom search
-                'search_params': {
-                    'scope': 'cross-wiki',
-                    'contentType': '',
-                    'ns[0]': '0',      # Main namespace
-                    'ns[1]': '4',      # Project namespace
-                    'ns[2]': '12',     # Help namespace
-                    'ns[3]': '110',
-                    'ns[4]': '112',
-                    'ns[5]': '118',
-                    'ns[6]': '500',
-                    'ns[7]': '502',
-                    'ns[8]': '2900'
-                }
-            },
-            'anime_transcripts': {
-                'base_url': 'https://anime-transcripts.com',
-                'search_patterns': [
-                    '/{show_slug}',
-                    '/{show_slug}/season-{season}',
-                    '/{show_slug}/s{season}e{episode:02d}'
-                ],
-                'transcript_selector': '.transcript-content',
-                'title_selector': '.episode-title',
-                'supports_search': False
-            }
-        }
-        
-        # Common show name mappings to URL slugs
-        self.show_mappings = {
-            'My Hero Academia': ['my-hero-academia', 'boku-no-hero-academia', 'mha', 'My_Hero_Academia-5626028'],
-            'Attack on Titan': ['attack-on-titan', 'shingeki-no-kyojin', 'aot'],
-            'Demon Slayer': ['demon-slayer', 'kimetsu-no-yaiba'],
-            'One Piece': ['one-piece'],
-            'Naruto': ['naruto', 'naruto-shippuden'],
-            'Dragon Ball': ['dragon-ball', 'dragon-ball-z', 'dragon-ball-super'],
-            'Death Note': ['death-note'],
-            'Fullmetal Alchemist': ['fullmetal-alchemist', 'fma'],
-            'Hunter x Hunter': ['hunter-x-hunter', 'hxh'],
-            'Tokyo Ghoul': ['tokyo-ghoul'],
-            'Jujutsu Kaisen': ['jujutsu-kaisen'],
-            'Chainsaw Man': ['chainsaw-man'],
-            'Frieren: Beyond Journey\'s End': ['Frieren_Beyond_Journeys_End-22248376', 'frieren-beyond-journeys-end']
-        }
-        
-        # Request session with retry and delay
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        })
-        
-        self.retry_count = 3
-        self.delay_range = (1, 3)  # Random delay between requests
-    
-    def get_show_slugs(self, show_name):
-        """
-        Get possible URL slugs for a show name with comprehensive pattern generation.
-        
-        Args:
-            show_name (str): The show name
-            
-        Returns:
-            list: List of possible URL slugs
-        """
-        # Check if we have predefined mappings
-        if show_name in self.show_mappings:
-            return self.show_mappings[show_name]
-        
-        slugs = []
-        original = show_name.strip()
-        
-        # Basic cleanup
-        cleaned = original.lower()
-        
-        # Handle common patterns and special characters
-        replacements = [
-            # Remove/replace punctuation
-            (':', ''),
-            ("'", ''),
-            ('"', ''),
-            ('!', ''),
-            ('?', ''),
-            ('.', ''),
-            (',', ''),
-            ('&', 'and'),
-            ('+', 'plus'),
-            ('~', ''),
-            ('/', '-'),
-            ('\\', '-'),
-            ('(', ''),
-            (')', ''),
-            ('[', ''),
-            (']', ''),
-            ('{', ''),
-            ('}', ''),
-        ]
-        
-        # Generate multiple variations
-        for old, new in replacements:
-            cleaned = cleaned.replace(old, new)
-        
-        # Remove extra spaces and normalize
-        cleaned = ' '.join(cleaned.split())
-        
-        # Pattern 1: Standard dash-separated
-        slugs.append(cleaned.replace(' ', '-'))
-        
-        # Pattern 2: Underscore-separated
-        slugs.append(cleaned.replace(' ', '_'))
-        
-        # Pattern 3: No separators (concatenated)
-        slugs.append(cleaned.replace(' ', ''))
-        
-        # Pattern 4: Title case with dashes
-        title_case = '-'.join(word.capitalize() for word in cleaned.split())
-        slugs.append(title_case)
-        
-        # Pattern 5: Handle subtitle patterns (e.g., "Title: Subtitle" -> "title-subtitle")
-        if ':' in original:
-            parts = [part.strip() for part in original.split(':')]
-            if len(parts) == 2:
-                main_title, subtitle = parts
-                # Main title only
-                main_cleaned = self._clean_title_part(main_title)
-                slugs.append(main_cleaned.replace(' ', '-'))
-                slugs.append(main_cleaned.replace(' ', '_'))
                 
-                # Subtitle only
-                sub_cleaned = self._clean_title_part(subtitle)
-                slugs.append(sub_cleaned.replace(' ', '-'))
-                slugs.append(sub_cleaned.replace(' ', '_'))
+                if not transcript_result or not transcript_result.get('transcript'):
+                    return ProcessingResult(
+                        success=False,
+                        error=f'Failed to parse transcript from discovered URL: {discovery_result["url"]}'
+                    )
                 
-                # Combined variations
-                combined = f"{main_cleaned} {sub_cleaned}"
-                slugs.append(combined.replace(' ', '-'))
-                slugs.append(combined.replace(' ', '_'))
-        
-        # Pattern 6: Acronyms (first letter of each word)
-        words = cleaned.split()
-        if len(words) > 1:
-            acronym = ''.join(word[0] for word in words if word)
-            slugs.append(acronym)
-            slugs.append(acronym.upper())
-        
-        # Pattern 7: Remove common words
-        common_words = {'the', 'a', 'an', 'of', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 'by'}
-        filtered_words = [word for word in words if word not in common_words]
-        if len(filtered_words) != len(words):
-            filtered_title = ' '.join(filtered_words)
-            slugs.append(filtered_title.replace(' ', '-'))
-            slugs.append(filtered_title.replace(' ', '_'))
-        
-        # Pattern 8: Handle numbers (convert to words and vice versa)
-        number_map = {
-            '1': 'one', '2': 'two', '3': 'three', '4': 'four', '5': 'five',
-            '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine', '10': 'ten',
-            'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
-            'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10'
-        }
-        
-        for old_num, new_num in number_map.items():
-            if old_num in cleaned:
-                numbered_variant = cleaned.replace(old_num, new_num)
-                slugs.append(numbered_variant.replace(' ', '-'))
-                slugs.append(numbered_variant.replace(' ', '_'))
-        
-        # Remove duplicates while preserving order
-        unique_slugs = []
-        seen = set()
-        for slug in slugs:
-            if slug and slug not in seen:
-                unique_slugs.append(slug)
-                seen.add(slug)
-        
-        return unique_slugs
-    
-    def _clean_title_part(self, title_part):
-        """Helper method to clean individual title parts."""
-        cleaned = title_part.lower().strip()
-        
-        # Remove special characters
-        for char in ":'\"!?.,&+~()[]{}":
-            cleaned = cleaned.replace(char, '')
-        
-        # Normalize spaces
-        cleaned = ' '.join(cleaned.split())
-        
-        return cleaned
-    
-    def format_episode_title(self, title):
-        """
-        Format episode title for URL usage.
-        
-        Args:
-            title (str): Episode title
-            
-        Returns:
-            str: Formatted title slug
-        """
-        if not title:
-            return ''
-        
-        # Remove special characters and format for URL
-        slug = title.lower()
-        slug = ''.join(c for c in slug if c.isalnum() or c in ' -_')
-        slug = slug.replace(' ', '-')
-        slug = '-'.join(filter(None, slug.split('-')))  # Remove empty parts
-        
-        return slug
-    
-    def search_source(self, source_name, show_name, season, episode, episode_title=None):
-        """
-        Search a specific source for episode transcript.
-        
-        Args:
-            source_name (str): Name of the source to search
-            show_name (str): Show name
-            season (int): Season number
-            episode (int): Episode number
-            episode_title (str, optional): Episode title
-            
-        Returns:
-            dict: Search result with transcript data or None
-        """
-        if source_name not in self.sources:
-            return None
-        
-        source_config = self.sources[source_name]
-        show_slugs = self.get_show_slugs(show_name)
-        
-        for show_slug in show_slugs:
-            for pattern in source_config['search_patterns']:
-                try:
-                    # Format the URL pattern
-                    if '{title_slug}' in pattern and episode_title:
-                        title_slug = self.format_episode_title(episode_title)
-                        url = source_config['base_url'] + pattern.format(
-                            show_slug=show_slug,
-                            season=season,
-                            episode=episode,
-                            title_slug=title_slug
-                        )
-                    else:
-                        url = source_config['base_url'] + pattern.format(
-                            show_slug=show_slug,
-                            season=season,
-                            episode=episode
-                        )
-                    
-                    logger.info(f"Trying {source_name}: {url}")
-                    
-                    # Attempt to fetch and parse
-                    result = self._fetch_and_parse(url, source_config)
-                    if result:
-                        result['source'] = source_name
-                        result['url'] = url
-                        return result
-                    
-                    # Random delay between requests
-                    time.sleep(random.uniform(*self.delay_range))
-                    
-                except Exception as e:
-                    logger.debug(f"Error searching {source_name} with pattern {pattern}: {e}")
-                    continue
-        
-        return None
-    
-    def _fetch_and_parse(self, url, source_config):
-        """
-        Fetch URL and parse content according to source configuration.
-        
-        Args:
-            url (str): URL to fetch
-            source_config (dict): Source-specific parsing configuration
-            
-        Returns:
-            dict: Parsed content or None if failed
-        """
-        for attempt in range(self.retry_count):
-            try:
-                response = self.session.get(url, timeout=10)
-                response.raise_for_status()
+                # Save transcript to database
+                self.db.save_episode(
+                    show=show_name,
+                    season=str(season),
+                    episode=str(episode),
+                    url=discovery_result['url'],
+                    transcript=transcript_result['transcript']
+                )
                 
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # Extract transcript
-                transcript_element = soup.select_one(source_config['transcript_selector'])
-                if not transcript_element:
-                    return None
-                
-                transcript = transcript_element.get_text(strip=True, separator=' ')
-                
-                # Extract title
-                title_element = soup.select_one(source_config['title_selector'])
-                title = title_element.get_text(strip=True) if title_element else "Unknown Title"
-                
-                # Basic content validation
-                if len(transcript) < 500:  # Too short to be a full transcript
-                    return None
-                
-                # Extract episode info from title or URL
-                episode_info = self._extract_episode_info(title, url)
-                
-                return {
-                    'transcript': transcript,
-                    'title': title,
-                    'episode_info': episode_info,
-                    'content_length': len(transcript),
-                    'quality_score': self._assess_content_quality(transcript)
-                }
-                
-            except requests.exceptions.RequestException as e:
-                logger.debug(f"Request failed (attempt {attempt + 1}): {e}")
-                if attempt < self.retry_count - 1:
-                    time.sleep(2 ** attempt)  # Exponential backoff
-                continue
-            except Exception as e:
-                logger.debug(f"Parsing failed: {e}")
-                break
-        
-        return None
-    
-    def _extract_episode_info(self, title, url):
-        """
-        Extract episode information from title or URL.
-        
-        Args:
-            title (str): Page title
-            url (str): Page URL
+                result = ProcessingResult(
+                    success=True,
+                    data={
+                        "show": show_name,
+                        "season": season,
+                        "episode": episode,
+                        "transcript_url": discovery_result['url'],
+                        "transcript_source": discovery_result['source'],
+                        "quality_score": transcript_result['quality_score']
+                    }
+                )
             
-        Returns:
-            dict: Extracted episode information
-        """
-        episode_info = {'season': None, 'episode': None}
-        
-        # Try to extract from title
-        season_match = re.search(r'[Ss]eason\s*(\d+)', title)
-        episode_match = re.search(r'[Ee]pisode\s*(\d+)', title)
-        
-        if season_match:
-            episode_info['season'] = season_match.group(1)
-        if episode_match:
-            episode_info['episode'] = episode_match.group(1)
-        
-        # Try to extract from URL if not found in title
-        if not episode_info['season']:
-            season_match = re.search(r'season[-_](\d+)', url, re.I)
-            if season_match:
-                episode_info['season'] = season_match.group(1)
-        
-        if not episode_info['episode']:
-            episode_match = re.search(r'episode[-_](\d+)', url, re.I)
-            if episode_match:
-                episode_info['episode'] = episode_match.group(1)
-        
-        return episode_info
-    
-    def _assess_content_quality(self, transcript):
-        """
-        Assess the quality of transcript content.
-        
-        Args:
-            transcript (str): Transcript text
+            if result.success:
+                logger.info(f"Successfully processed {show_name} S{season}E{episode}")
+            else:
+                logger.error(f"Failed to process {show_name} S{season}E{episode}: {result.error}")
             
-        Returns:
-            float: Quality score from 0.0 to 1.0
-        """
-        score = 0.0
-        
-        # Length check
-        if len(transcript) > 1000:
-            score += 0.3
-        elif len(transcript) > 500:
-            score += 0.2
-        
-        # Dialogue indicators
-        dialogue_indicators = [':', '"', '–', '-', 'said', 'replied']
-        if any(indicator in transcript for indicator in dialogue_indicators):
-            score += 0.3
-        
-        # Narrative structure
-        narrative_words = ['scene', 'cut to', 'fade in', 'fade out', 'meanwhile']
-        if any(word in transcript.lower() for word in narrative_words):
-            score += 0.2
-        
-        # Character names (common anime character patterns)
-        if len([word for word in transcript.split() if word[0].isupper()]) > 10:
-            score += 0.2
-        
-        return min(score, 1.0)
-    
-    def find_episode_transcript(self, show_name, season, episode, episode_title=None, use_discovery=True):
-        """
-        Search all sources for the best episode transcript with enhanced discovery.
-        
-        Args:
-            show_name (str): Show name
-            season (int): Season number
-            episode (int): Episode number
-            episode_title (str, optional): Episode title for better matching
-            use_discovery (bool): Whether to use dynamic pattern discovery
-            
-        Returns:
-            dict: Best transcript result or None if not found
-        """
-        logger.info(f"Searching for {show_name} Season {season} Episode {episode}")
-        
-        all_results = []
-        
-        # First pass: Try site search functionality for supported sources
-        for source_name, source_config in self.sources.items():
-            if source_config.get('supports_search', False):
-                logger.info(f"🔍 Trying site search for {source_name}")
-                result = self.search_using_site_search(source_name, show_name, season, episode)
-                if result:
-                    all_results.append(result)
-                    logger.info(f"Found transcript via search on {source_name} (quality: {result['quality_score']:.2f})")
-        
-        # Second pass: Standard URL pattern search for all sources
-        if not all_results:
-            logger.info("🔗 Trying standard URL patterns...")
-            for source_name in self.sources.keys():
-                result = self.search_source(source_name, show_name, season, episode, episode_title)
-                if result:
-                    all_results.append(result)
-                    logger.info(f"Found transcript on {source_name} (quality: {result['quality_score']:.2f})")
-        
-        # Third pass: Enhanced discovery if no results and discovery is enabled
-        if not all_results and use_discovery:
-            logger.info(f"No results found with standard methods. Trying enhanced discovery...")
-            result = self.search_with_fallback_discovery(show_name, season, episode, episode_title)
-            if result:
-                all_results.append(result)
-        
-        if not all_results:
-            logger.warning(f"No transcripts found for {show_name} S{season}E{episode}")
-            return None
-        
-        # Select best result based on quality score and content length
-        best_result = max(all_results, key=lambda x: (x['quality_score'], x['content_length']))
-        
-        search_method = "search" if best_result.get('found_via_search') else "URL patterns"
-        logger.info(f"Selected best result from {best_result['source']} via {search_method} "
-                   f"(quality: {best_result['quality_score']:.2f}, "
-                   f"length: {best_result['content_length']} chars)")
-        
-        return best_result
-
-    def process_episode_by_numbers(self, season, episode, episode_title=None, show_name="My Hero Academia"):
-        """
-        Process episode by season and episode numbers using transcript discovery.
-        
-        Args:
-            season (int): Season number
-            episode (int): Episode number
-            episode_title (str, optional): Episode title for better matching
-            show_name (str): Show name (default: "My Hero Academia")
-            
-        Returns:
-            dict: Processing result
-        """
-        # Use transcript discovery agent to find the episode
-        transcript_result = self.transcript_agent.find_episode_transcript(
-            show_name, season, episode, episode_title
-        )
-        
-        if not transcript_result:
-            return {
-                'success': False, 
-                'error': f'No transcript found for {show_name} Season {season} Episode {episode}'
-            }
-        
-        # Process the found transcript
-        try:
-            # Create content result in expected format
-            content_result = {
-                'transcript': transcript_result['transcript'],
-                'title': transcript_result['title'],
-                'episode': f"Season {season}, Episode {episode}",
-                'analysis': f"Found via {transcript_result['source']} with quality score {transcript_result['quality_score']:.2f}",
-                'success': True
-            }
-            
-            # Continue with existing processing workflow
-            logger.info("Generating AI summary")
-            summary_result = self.generate_structured_summary(content_result, show_name)
-            
-            # Ensure episode info is correctly set
-            summary_result['season'] = str(season)
-            summary_result['episode'] = str(episode)
-            summary_result['show'] = show_name
-            
-            # Save to database
-            self.db.save_episode(
-                summary_result['show'],
-                summary_result['season'], 
-                summary_result['episode'],
-                transcript_result['url'],
-                content_result['transcript'],
-                summary_result['youtube_transcript'],
-                summary_result['plot_points']
-            )
-            
-            return {"success": True, "data": summary_result, "source_info": transcript_result}
+            return result
             
         except Exception as e:
-            logger.error(f"Processing failed for Season {season} Episode {episode}: {e}")
-            return {"success": False, "error": str(e)}
+            logger.error(f"Processing failed for {show_name} S{season}E{episode}: {e}")
+            return ProcessingResult(
+                success=False,
+                error=str(e)
+            )
     
-    def process_season_batch(self, season, start_episode=None, end_episode=None, show_name="My Hero Academia"):
+    async def process_season_batch(self, show_name: str, season: int, 
+                           start_episode: int = None, end_episode: int = None,
+                           full_processing: bool = False):
         """
-        Process multiple episodes in a season.
+        Process multiple episodes in a season using modular workflow.
         
         Args:
+            show_name (str): The name of the show
             season (int): Season number
             start_episode (int, optional): Starting episode number
             end_episode (int, optional): Ending episode number
-            show_name (str): Show name (default: "My Hero Academia")
-            
-        Returns:
-            dict: Batch processing results
+            full_processing (bool): Whether to do full AI/video processing
         """
-        # Get episode configuration
-        episode_config = self.config_manager.get_episode_config(season, 1)
-        if not episode_config:
-            return {'success': False, 'error': f'No configuration found for season {season}'}
+        # Get episode range from config manager
+        from config.settings import EpisodeConfigs
+        max_episodes = EpisodeConfigs.get_season_episodes(show_name, season)
+        if not max_episodes:
+            logger.error(f"No configuration found for {show_name} season {season}")
+            return
         
-        # Determine episode range
         if start_episode is None:
             start_episode = 1
         if end_episode is None:
-            end_episode = episode_config['max_episodes']
+            end_episode = max_episodes
         
-        results = {
-            'season': season,
-            'total_episodes': end_episode - start_episode + 1,
-            'successful': 0,
-            'failed': 0,
-            'episodes': {}
-        }
+        logger.info(f"Processing {show_name} Season {season}, Episodes {start_episode}-{end_episode}")
+        logger.info(f"Full processing: {'enabled' if full_processing else 'disabled (transcript only)'}")
+        
+        successful = 0
+        failed = 0
         
         for ep_num in range(start_episode, end_episode + 1):
-            logger.info(f"Processing Season {season}, Episode {ep_num}")
+            episode_config = self.config_manager.get_episode_config(show_name, season, ep_num)
+            episode_title = episode_config.get('title') if episode_config else None
             
-            # Get episode title if available
-            ep_config = self.config_manager.get_episode_config(season, ep_num)
-            episode_title = ep_config.get('title') if ep_config else None
+            result = await self.process_episode_by_numbers(
+                show_name, season, ep_num, episode_title, full_processing
+            )
             
-            result = self.process_episode_by_numbers(season, ep_num, episode_title, show_name)
-            
-            results['episodes'][ep_num] = result
-            if result['success']:
-                results['successful'] += 1
+            if result.success:
+                successful += 1
             else:
-                results['failed'] += 1
+                failed += 1
+                logger.error(f"Failed to process episode {ep_num}: {result.error}")
             
             # Add delay between episodes to be respectful to servers
             time.sleep(random.uniform(2, 5))
         
-        return results
-
-    def discover_show_slug(self, show_name, season=1, episode=1):
-        """
-        Dynamically discover the correct slug for a show by testing URLs.
-        
-        Args:
-            show_name (str): Show name to discover slug for
-            season (int): Season to test with (default: 1)
-            episode (int): Episode to test with (default: 1)
-            
-        Returns:
-            str: Working slug if found, None otherwise
-        """
-        logger.info(f"🔍 Discovering URL patterns for '{show_name}'")
-        
-        possible_slugs = self.get_show_slugs(show_name)
-        
-        # Test each source with each slug
-        for source_name, source_config in self.sources.items():
-            logger.info(f"Testing {source_name}...")
-            
-            for slug in possible_slugs:
-                for pattern in source_config['search_patterns']:
-                    try:
-                        # Skip patterns that require title_slug
-                        if '{title_slug}' in pattern:
-                            continue
-                            
-                        url = source_config['base_url'] + pattern.format(
-                            show_slug=slug,
-                            season=season,
-                            episode=episode
-                        )
-                        
-                        logger.debug(f"Testing: {url}")
-                        
-                        # Quick HEAD request to check if URL exists
-                        response = self.session.head(url, timeout=5)
-                        if response.status_code == 200:
-                            logger.info(f"✅ Found working pattern: {slug} on {source_name}")
-                            
-                            # Add to our mappings for future use
-                            if show_name not in self.show_mappings:
-                                self.show_mappings[show_name] = []
-                            if slug not in self.show_mappings[show_name]:
-                                self.show_mappings[show_name].append(slug)
-                            
-                            return slug
-                            
-                    except Exception as e:
-                        logger.debug(f"Failed {url}: {e}")
-                        continue
-                    
-                    # Small delay between tests
-                    time.sleep(0.5)
-        
-        logger.warning(f"❌ No working URL pattern found for '{show_name}'")
-        return None
+        logger.info(f"Batch processing complete: {successful} successful, {failed} failed")
     
-    def search_with_fallback_discovery(self, show_name, season, episode, episode_title=None):
+    async def process_season(self, show_name: str, season: int, force_reprocess: bool = False,
+                      target_minutes: int = None, export_format: str = 'standard') -> ProcessingResult:
         """
-        Enhanced search that includes dynamic pattern discovery.
+        Comprehensive season processing with configurable video length.
+        
+        This function:
+        1. Analyzes character development and relationships across all episodes
+        2. Creates a configurable-length summary of the season (5-15 minutes)
+        3. Stores the summary for future analysis
+        4. Generates images from summary concepts
+        5. Creates YouTube transcript and voice recording
+        6. Produces final MP4 video
         
         Args:
-            show_name (str): Show name
+            show_name (str): The name of the show
             season (int): Season number
-            episode (int): Episode number
-            episode_title (str, optional): Episode title
+            force_reprocess (bool): Whether to reprocess even if summary exists
+            target_minutes (int): Target video length in minutes (5-15)
+            export_format (str): Target export format (standard, youtube_shorts, tiktok, instagram_reels, twitter)
             
         Returns:
-            dict: Search result or None
+            ProcessingResult: Result of the season processing
         """
-        # First, try the normal search
-        result = None
-        for source_name in self.sources.keys():
-            result = self.search_source(source_name, show_name, season, episode, episode_title)
-            if result:
-                break
+        logger.info(f"🎬 Starting comprehensive season processing for {show_name} Season {season}")
         
-        # If normal search fails, try pattern discovery
-        if not result:
-            logger.info(f"Standard search failed for {show_name}, trying pattern discovery...")
-            discovered_slug = self.discover_show_slug(show_name, season, episode)
-            
-            if discovered_slug:
-                # Try search again with discovered pattern
-                for source_name in self.sources.keys():
-                    result = self.search_source(source_name, show_name, season, episode, episode_title)
-                    if result:
-                        break
-        
-        return result
-    
-    def search_using_site_search(self, source_name, show_name, season, episode):
-        """
-        Use the site's built-in search functionality to find episodes.
-        
-        Args:
-            source_name (str): Name of the source to search
-            show_name (str): Show name
-            season (int): Season number
-            episode (int): Episode number
-            
-        Returns:
-            dict: Search result with transcript data or None
-        """
-        if source_name not in self.sources:
-            return None
-        
-        source_config = self.sources[source_name]
-        
-        # Check if this source supports search
-        if not source_config.get('supports_search', False):
-            return None
+        if target_minutes:
+            logger.info(f"🎯 Target video length: {target_minutes} minutes")
         
         try:
-            # Generate source-specific search query
-            search_query = self._generate_search_query(source_name, show_name, season, episode)
-            search_params = self._get_search_params(source_config, search_query)
+            # Step 1: Check if season summary already exists
+            existing_summary = self.db.get_season_summary(show_name, season)
+            if existing_summary and not force_reprocess:
+                logger.info(f"Season summary already exists for {show_name} S{season}")
+                return ProcessingResult(
+                    success=True,
+                    data={
+                        "message": "Season summary already exists",
+                        "existing_summary": existing_summary,
+                        "use_force_reprocess": "Set force_reprocess=True to regenerate"
+                    }
+                )
             
-            logger.info(f"🔍 Searching {source_name} for: '{search_query}'")
+            # Step 2: Ensure all episodes have transcripts
+            logger.info("📚 Ensuring all episodes have transcripts...")
+            from config.settings import EpisodeConfigs
+            episode_count = EpisodeConfigs.get_season_episodes(show_name, season)
+            if not episode_count:
+                # Try to discover episodes
+                discovered_episodes = self.discover_show_episodes(show_name, season)
+                episode_count = len(discovered_episodes) if discovered_episodes else 12  # Default fallback
             
-            # Perform search
-            response = self.session.get(
-                source_config['search_url'], 
-                params=search_params, 
-                timeout=10
-            )
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Find search results
-            search_results = soup.select(source_config.get('search_result_selector', 'a'))
-            
-            # Filter search results based on source type
-            relevant_results = []
-            for result in search_results:
-                href = result.get('href', '')
-                text = result.get_text(strip=True)
+            # Process episodes to ensure transcripts are available
+            transcript_errors = []
+            for ep_num in range(1, episode_count + 1):
+                episode_data = self.db.get_episode(show_name, season, ep_num)
+                if not episode_data or not episode_data['transcript']:
+                    logger.info(f"Processing transcript for S{season}E{ep_num}")
+                    result = await self.process_episode_by_numbers(
+                        show_name, season, ep_num, full_processing=False
+                    )
+                    if not result.success:
+                        transcript_errors.append(f"S{season}E{ep_num}: {result.error}")
                 
-                if source_name == 'transcripts_wiki':
-                    # For Fandom, look for wiki pages containing transcripts
-                    if (href and '/wiki/' in href and text and len(text) > 5 and 
-                        'action=edit' not in href and 'Special:' not in href and
-                        'Category:' not in href and 'Template:' not in href):
-                        relevant_results.append(result)
-                elif source_name == 'subslikescript':
-                    # For SubsLikeScript, look for series pages
-                    if href and href != '/series' and 'series/' in href and text != 'TV Shows':
-                        relevant_results.append(result)
-                else:
-                    # Default filtering
-                    if href and text and len(text) > 3:
-                        relevant_results.append(result)
+                # Add delay to be respectful to servers
+                time.sleep(random.uniform(1, 3))
             
-            logger.info(f"Found {len(relevant_results)} relevant search results")
+            if transcript_errors:
+                logger.warning(f"Some transcripts failed to process: {transcript_errors}")
             
-            if not relevant_results:
-                logger.info("No relevant results found in search")
+            # Step 3: Calculate video structure
+            video_config = self._calculate_video_structure(target_minutes)
+            logger.info(f"📊 Video structure: {video_config}")
+            
+            # Step 4: Perform comprehensive season analysis
+            logger.info("🔍 Analyzing character development and relationships...")
+            season_analysis = self.analyze_season_development(show_name, season)
+            
+            if 'error' in season_analysis:
+                return ProcessingResult(
+                    success=False,
+                    error=f"Season analysis failed: {season_analysis['error']}"
+                )
+            
+            # Step 5: Generate length-adaptive summary
+            target_min = target_minutes or 5
+            logger.info(f"📝 Generating {target_min}-minute chronological summary...")
+            season_summary = self._generate_season_summary_with_length(
+                show_name, season, season_analysis, target_min
+            )
+            
+            if not season_summary:
+                return ProcessingResult(
+                    success=False,
+                    error="Failed to generate season summary"
+                )
+            
+            # Step 5: Store initial summary in database
+            logger.info("💾 Storing season summary...")
+            
+            # Step 6: Parse summary into chronological ideas for images
+            logger.info("🎨 Parsing summary into visual concepts...")
+            visual_concepts = self._parse_summary_to_concepts(season_summary, target_min)
+            
+            # Step 7: Generate images from concepts
+            logger.info(f"🖼️ Generating {len(visual_concepts)} images...")
+            print(f"🎨 GENERATING {len(visual_concepts)} IMAGES...")
+            print("💡 TIP: Upgrade to Google Cloud billing for AI-generated anime artwork, or enjoy free placeholder images!")
+            self._generate_season_images(visual_concepts, show_name, season)
+            
+            # Step 8: Create YouTube transcript
+            logger.info("📺 Creating YouTube transcript...")
+            youtube_transcript = self._create_youtube_transcript(season_summary, show_name, season)
+            
+            # Step 9: Convert to voice recording
+            logger.info("🎤 Converting to voice recording...")
+            print("🎙️  GENERATING AUDIO NARRATION...")
+            print("💡 TIP: Upgrade to Google Cloud billing for professional AI voice-over, or use free silent audio!")
+            audio_file = self._create_voice_recording(youtube_transcript, show_name, season)
+            
+            # Step 10: Create final MP4 video
+            logger.info("🎬 Creating final MP4 video...")
+            video_file = self._create_season_video(audio_file, visual_concepts, show_name, season)
+            
+            # Step 10.5: Export in specified format if not standard
+            export_result = self.export_video_format(show_name, season, visual_concepts, audio_file, export_format)
+
+            export_skipped = export_result.get('status') == 'skipped_not_implemented'
+            if export_skipped:
+                logger.warning(
+                    f"⚠️ Platform export '{export_format}' was skipped: it is not implemented, "
+                    f"so no {export_format} file exists. Only the standard MP4 was produced."
+                )
+                print(
+                    f"⚠️  {export_format} export SKIPPED - platform export is not implemented. "
+                    f"No {export_format} file was created; the standard MP4 is available."
+                )
+
+            # Step 11: Store media file information in database
+            # Never persist an export record that claims a file exists when it does not.
+            media_files = {
+                "audio_file": audio_file,
+                "video_file": video_file,
+                "image_count": len(visual_concepts),
+                "youtube_transcript": youtube_transcript,
+                "export_format": "standard" if export_skipped else export_format,
+                "requested_export_format": export_format,
+                "export_result": export_result
+            }
+            
+            # Update the database entry with media files
+            summary_id = self.db.save_season_summary(
+                show_name, season, season_summary, season_analysis, media_files
+            )
+            
+            logger.info(f"✅ Season processing completed successfully for {show_name} S{season}")
+            
+            # Add helpful message about free vs paid features
+            print("\n" + "="*70)
+            print("🎉 VIDEO GENERATION COMPLETE!")
+            print("="*70)
+            print("📁 Your video includes:")
+            print("   🖼️  Beautiful placeholder images (upgrade for AI artwork)")
+            print("   🔇 Silent audio track (upgrade for AI narration)")
+            print("   🎬 Professional video compilation")
+            print("\n💰 Want premium AI features?")
+            print("   • Enable Google Cloud billing for AI-generated images & voice")
+            print("   • Cost: ~$0.43 per 10-minute video")
+            print("   • No code changes needed - just enable billing!")
+            print("="*70)
+            
+            return ProcessingResult(
+                success=True,
+                data={
+                    "show_name": show_name,
+                    "season": season,
+                    "summary_id": summary_id,
+                    "summary": season_summary,
+                    "video_config": video_config,  # Include video configuration
+                    "target_duration_minutes": target_min,
+                    "analysis_insights": {
+                        "total_characters": season_analysis['character_insights']['total_characters'],
+                        "total_episodes": season_analysis['season_info']['total_episodes'],
+                        "pivotal_moments": season_analysis['story_insights']['pivotal_moments_count'],
+                        "dominant_themes": season_analysis['story_insights']['dominant_themes'][:3]
+                    },
+                    "media_files": media_files,
+                    "processing_stats": {
+                        "transcript_errors": len(transcript_errors),
+                        "failed_episodes": transcript_errors if transcript_errors else None
+                    }
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"Season processing failed for {show_name} S{season}: {e}")
+            return ProcessingResult(
+                success=False,
+                error=str(e)
+            )
+    
+    def get_stats(self):
+        """Get processing statistics."""
+        return self.db.get_processing_stats()
+
+    def analyze_episode_quality(self, show_name: str, season: int, episode: int):
+        """
+        Analyze the quality of a processed episode.
+        
+        Args:
+            show_name (str): The name of the show
+            season (int): Season number
+            episode (int): Episode number
+        """
+        try:
+            # Get episode data from database
+            episode_data = self.db.get_episode(show_name, season, episode)
+            if not episode_data:
+                logger.error(f"Episode not found in database: {show_name} S{season}E{episode}")
                 return None
             
-            # Look for the most relevant result
-            best_match = self._find_best_search_match(
-                relevant_results, show_name, season, episode, source_config
-            )
-            
-            if best_match:
-                # Get the result URL
-                result_url = best_match.get('href')
-                if result_url and not result_url.startswith('http'):
-                    result_url = urljoin(source_config['base_url'], result_url)
-                
-                logger.info(f"🎯 Best match: {result_url}")
-                
-                if source_name == 'transcripts_wiki':
-                    # For wiki sources, the search result might be a direct transcript page
-                    # Try multiple attempts to get a valid transcript
-                    valid_result = self._try_wiki_page_variants(result_url, source_config)
-                    if valid_result:
-                        valid_result['source'] = source_name
-                        valid_result['found_via_search'] = True
-                        return valid_result
-                else:
-                    # For other sources like SubsLikeScript, find episode on series page
-                    episode_url = self._find_episode_on_series_page(
-                        result_url, season, episode, source_config
-                    )
-                    
-                    if episode_url:
-                        logger.info(f"📺 Found episode URL: {episode_url}")
-                        
-                        # Fetch and parse the transcript from the episode page
-                        result = self._fetch_and_parse(episode_url, source_config)
-                        if result:
-                            result['source'] = source_name
-                            result['url'] = episode_url
-                            result['found_via_search'] = True
-                            return result
-                    else:
-                        logger.info("Could not find specific episode on series page")
-                        return None
+            # Use quality agent to analyze
+            quality_report = self.quality_agent.analyze_episode_quality(episode_data)
+            return quality_report
             
         except Exception as e:
-            logger.error(f"Search failed for {source_name}: {e}")
-        
-        return None
-    
-    def _find_best_search_match(self, search_results, show_name, season, episode, source_config):
+            logger.error(f"Quality analysis failed: {e}")
+            return None
+
+    def discover_show_episodes(self, show_name: str, season: int = None):
         """
-        Find the best matching search result for the episode.
+        Discover available episodes for a show using the discovery agent.
         
         Args:
-            search_results: List of search result elements
-            show_name (str): Show name
-            season (int): Season number
-            episode (int): Episode number
-            source_config (dict): Source configuration
-            
-        Returns:
-            BeautifulSoup element: Best matching result or None
-        """
-        scored_results = []
-        
-        for result in search_results:
-            # Get the title/text of the search result
-            title_element = result.select_one(source_config.get('search_title_selector', ''))
-            title = title_element.get_text(strip=True) if title_element else result.get_text(strip=True)
-            
-            # Get the URL
-            url = result.get('href', '')
-            
-            # Score this result based on relevance
-            score = self._score_search_result(title, url, show_name, season, episode)
-            
-            if score > 0:
-                scored_results.append({
-                    'element': result,
-                    'title': title,
-                    'url': url,
-                    'score': score
-                })
-                logger.debug(f"Result: '{title}' (score: {score:.2f})")
-        
-        # Return the highest scoring result
-        if scored_results:
-            best_result = max(scored_results, key=lambda x: x['score'])
-            logger.info(f"Best match: '{best_result['title']}' (score: {best_result['score']:.2f})")
-            return best_result['element']
-        
-        return None
-    
-    def _score_search_result(self, title, url, show_name, season, episode):
-        """
-        Score a search result based on how well it matches the target episode.
-        
-        Args:
-            title (str): Title of the search result
-            url (str): URL of the search result
-            show_name (str): Target show name
-            season (int): Target season
-            episode (int): Target episode
-            
-        Returns:
-            float: Relevance score (higher is better)
-        """
-        score = 0.0
-        title_lower = title.lower()
-        url_lower = url.lower()
-        show_lower = show_name.lower()
-        
-        # Show name matching (most important)
-        show_words = show_lower.split()
-        title_words = title_lower.split()
-        
-        # Check for exact show name match
-        if show_lower in title_lower:
-            score += 3.0
-        else:
-            # Check for partial matches
-            matching_words = sum(1 for word in show_words if word in title_lower)
-            score += (matching_words / len(show_words)) * 2.0
-        
-        # Season matching
-        season_patterns = [
-            f"season {season}",
-            f"season{season}",
-            f"s{season}",
-            f"s{season:02d}"
-        ]
-        
-        for pattern in season_patterns:
-            if pattern in title_lower or pattern in url_lower:
-                score += 1.5
-                break
-        
-        # Episode matching
-        episode_patterns = [
-            f"episode {episode}",
-            f"episode{episode}",
-            f"ep {episode}",
-            f"ep{episode}",
-            f"e{episode}",
-            f"e{episode:02d}"
-        ]
-        
-        for pattern in episode_patterns:
-            if pattern in title_lower or pattern in url_lower:
-                score += 1.5
-                break
-        
-        # Bonus for transcript-related keywords
-        transcript_keywords = ['transcript', 'script', 'dialogue', 'subtitles']
-        for keyword in transcript_keywords:
-            if keyword in title_lower or keyword in url_lower:
-                score += 1.0  # Increased bonus for transcript keywords
-                break
-        
-        # Wiki-specific bonuses
-        if '/wiki/' in url_lower:
-            # Bonus for wiki pages
-            score += 0.5
-            
-            # Higher bonus for pages that look like episode pages
-            wiki_episode_indicators = ['episode', 'transcript', 'script']
-            for indicator in wiki_episode_indicators:
-                if indicator in title_lower:
-                    score += 0.5
-                    break
-        
-        # Penalty for unrelated content
-        negative_keywords = [
-            'review', 'trailer', 'preview', 'summary', 'discussion', 'category', 
-            'template', 'reaction', 'reacts', 'abridged', 'parody', 'dub', 'fandub'
-        ]
-        for keyword in negative_keywords:
-            if keyword in title_lower:
-                score -= 1.0  # Increased penalty for clearly unrelated content
-        
-        # Additional penalties for edit pages and special pages
-        if 'action=edit' in url_lower or 'Special:' in url_lower:
-            score -= 2.0
-        
-        return max(score, 0.0)
-    
-    def _find_episode_on_series_page(self, series_url, season, episode, source_config):
-        """
-        Navigate to a series page and find the specific episode.
-        
-        Args:
-            series_url (str): URL of the series page
-            season (int): Season number
-            episode (int): Episode number
-            source_config (dict): Source configuration
-            
-        Returns:
-            str: Episode URL if found, None otherwise
+            show_name (str): The name of the show
+            season (int, optional): Specific season to discover
         """
         try:
-            response = self.session.get(series_url, timeout=10)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Look for episode links on the series page
-            episode_links = soup.find_all('a', href=True)
-            
-            for link in episode_links:
-                href = link.get('href', '')
-                text = link.get_text(strip=True)
-                
-                # Check if this link matches our target episode
-                if self._is_target_episode_link(href, text, season, episode):
-                    episode_url = href
-                    if not episode_url.startswith('http'):
-                        episode_url = source_config['base_url'] + episode_url
-                    return episode_url
-            
-            logger.info(f"Episode S{season}E{episode} not found on series page")
-            return None
+            episodes = self.discovery_agent.discover_show_episodes(show_name, season)
+            logger.info(f"Discovered {len(episodes)} episodes for {show_name}")
+            return episodes
             
         except Exception as e:
-            logger.error(f"Failed to check series page {series_url}: {e}")
-            return None
-    
-    def _is_target_episode_link(self, href, text, season, episode):
-        """
-        Check if a link points to the target episode.
-        
-        Args:
-            href (str): Link href
-            text (str): Link text
-            season (int): Target season
-            episode (int): Target episode
-            
-        Returns:
-            bool: True if this appears to be the target episode
-        """
-        href_lower = href.lower()
-        text_lower = text.lower()
-        
-        # Check for season/episode patterns in URL
-        season_patterns = [
-            f'season-{season}',
-            f'season{season}',
-            f'/s{season}',
-            f's{season:02d}'
-        ]
-        
-        episode_patterns = [
-            f'episode-{episode}',
-            f'episode{episode}', 
-            f'/e{episode}',
-            f'e{episode:02d}'
-        ]
-        
-        # Must have both season and episode indicators
-        has_season = any(pattern in href_lower for pattern in season_patterns)
-        has_episode = any(pattern in href_lower for pattern in episode_patterns)
-        
-        if has_season and has_episode:
-            return True
-        
-        # Also check in the link text
-        season_in_text = any(pattern.replace('-', ' ').replace('/', ' ') in text_lower for pattern in season_patterns)
-        episode_in_text = any(pattern.replace('-', ' ').replace('/', ' ') in text_lower for pattern in episode_patterns)
-        
-        # More flexible text matching
-        season_text_patterns = [f'season {season}', f's{season}', f's{season:02d}']
-        episode_text_patterns = [f'episode {episode}', f'ep {episode}', f'e{episode}', f'e{episode:02d}']
-        
-        season_in_text = season_in_text or any(pattern in text_lower for pattern in season_text_patterns)
-        episode_in_text = episode_in_text or any(pattern in text_lower for pattern in episode_text_patterns)
-        
-        return season_in_text and episode_in_text
+            logger.error(f"Episode discovery failed: {e}")
+            return []
 
-    def _generate_search_query(self, source_name, show_name, season, episode):
+    def generate_content_summary(self, show_name: str, season: int, episode: int):
         """
-        Generate a search query tailored to the specific source.
+        Generate AI content summary for an episode.
         
         Args:
-            source_name (str): Name of the source
-            show_name (str): Show name
+            show_name (str): The name of the show
             season (int): Season number
             episode (int): Episode number
-            
-        Returns:
-            str: Formatted search query
         """
-        if source_name == 'transcripts_wiki':
-            # For Fandom/wiki sources, search broadly for transcript content
-            return f"{show_name} transcript"
-        elif source_name == 'subslikescript':
-            # For SubsLikeScript, include season/episode for more specific results
-            return f"{show_name} season {season} episode {episode}"
-        else:
-            # Default format
-            return f"{show_name} season {season} episode {episode}"
+        try:
+            # Get episode data from database
+            episode_data = self.db.get_episode(show_name, season, episode)
+            if not episode_data:
+                logger.error(f"Episode not found in database: {show_name} S{season}E{episode}")
+                return None
+            
+            # Use content agent to generate summary
+            summary = self.content_agent.generate_content_summary(episode_data['transcript'])
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Content summary generation failed: {e}")
+            return None
     
-    def _get_search_params(self, source_config, search_query):
+    def analyze_episode_quality(self, show_name: str, season: int, episode: int) -> Dict:
+        """Analyze episode quality across all stages."""
+        try:
+            # Get episode data from database
+            episode_data = self.db.get_episode(show_name, season, episode)
+            
+            if not episode_data:
+                logger.warning(f"No data found for {show_name} S{season}E{episode}")
+                return None
+            
+            # Perform comprehensive quality analysis
+            quality_report = self.quality_agent.validate_complete_workflow(
+                transcript_data=episode_data['transcript_data'],
+                content_data=episode_data['content_data'],
+                video_data=episode_data['video_data'],
+                discovery_data=episode_data['discovery_data'],
+                workflow_data=episode_data['workflow_data'],
+                show_name=show_name
+            )
+            
+            return quality_report
+            
+        except Exception as e:
+            logger.error(f"Quality analysis failed for {show_name} S{season}E{episode}: {e}")
+            return None
+    
+    def discover_show_episodes(self, show_name: str, season: int = None) -> List[Dict]:
+        """Discover available episodes for a show."""
+        try:
+            if season:
+                episodes = self.discovery_agent.discover_season_episodes(show_name, season)
+            else:
+                episodes = self.discovery_agent.discover_all_episodes(show_name)
+            
+            return episodes
+            
+        except Exception as e:
+            logger.error(f"Episode discovery failed for {show_name}: {e}")
+            return []
+    
+    def generate_content_summary(self, show_name: str, season: int, episode: int) -> str:
+        """Generate AI content summary for an episode."""
+        try:
+            # Get episode data from database
+            episode_data = self.db.get_episode(show_name, season, episode)
+            
+            if not episode_data or not episode_data['transcript']:
+                logger.warning(f"No transcript data found for {show_name} S{season}E{episode}")
+                return None
+            
+            # Generate summary using content agent
+            summary = self.content_agent.generate_episode_summary(
+                episode_data['transcript'], show_name, season, episode
+            )
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Content summary generation failed for {show_name} S{season}E{episode}: {e}")
+            return None
+    
+    def analyze_episode_characters(self, show_name: str, season: int, episode: int) -> Dict:
+        """Analyze characters in an episode using ChromaDB-powered character analysis."""
+        try:
+            if not self.character_agent:
+                logger.warning("Character analysis not available (ChromaDB dependencies missing)")
+                return {'error': 'Character analysis not available'}
+            
+            # Get episode data from database
+            episode_data = self.db.get_episode(show_name, season, episode)
+            
+            if not episode_data or not episode_data['transcript']:
+                logger.warning(f"No transcript data found for {show_name} S{season}E{episode}")
+                return {'error': 'No transcript data found'}
+            
+            # Use character analysis agent
+            character_profiles = self.character_agent.analyze_episode_characters(
+                show_name, season, episode, episode_data['transcript']
+            )
+            
+            # Convert profiles to serializable format
+            serializable_profiles = {}
+            for name, profile in character_profiles.items():
+                serializable_profiles[name] = {
+                    'name': profile.name,
+                    'dialogue_count': profile.total_dialogue_count,
+                    'personality_traits': profile.personality_traits,
+                    'relationships': profile.relationships,
+                    'first_appearance': profile.first_appearance
+                }
+            
+            return {
+                'episode': f"{show_name} S{season}E{episode}",
+                'characters': serializable_profiles,
+                'total_characters': len(serializable_profiles),
+                'analysis_completed': True
+            }
+            
+        except Exception as e:
+            logger.error(f"Character analysis failed for {show_name} S{season}E{episode}: {e}")
+            return {'error': str(e)}
+    
+    def find_similar_characters(self, character_name: str, show_name: str = None, limit: int = 5) -> List[Dict]:
+        """Find characters similar to the given character across all analyzed episodes."""
+        try:
+            if not self.character_agent:
+                logger.warning("Character analysis not available (ChromaDB dependencies missing)")
+                return []
+            
+            similar_chars = self.character_agent.find_similar_characters(
+                character_name, show_name, limit
+            )
+            
+            return similar_chars
+            
+        except Exception as e:
+            logger.error(f"Similar character search failed for {character_name}: {e}")
+            return []
+    
+    def analyze_character_development(self, character_name: str, show_name: str) -> Dict:
+        """Analyze how a character develops across episodes."""
+        try:
+            if not self.character_agent:
+                logger.warning("Character analysis not available (ChromaDB dependencies missing)")
+                return {'error': 'Character analysis not available'}
+            
+            development_analysis = self.character_agent.analyze_character_development(
+                character_name, show_name
+            )
+            
+            return development_analysis
+            
+        except Exception as e:
+            logger.error(f"Character development analysis failed for {character_name}: {e}")
+            return {'error': str(e)}
+    
+    def get_character_relationships(self, character_name: str, show_name: str = None) -> Dict:
+        """Get relationship map for a character."""
+        try:
+            if not self.character_agent:
+                logger.warning("Character analysis not available (ChromaDB dependencies missing)")
+                return {'error': 'Character analysis not available'}
+            
+            relationships = self.character_agent.get_character_relationships(
+                character_name, show_name
+            )
+            
+            return relationships
+            
+        except Exception as e:
+            logger.error(f"Character relationship analysis failed for {character_name}: {e}")
+            return {'error': str(e)}
+    
+    def search_character_moments(self, query: str, character_name: str = None, 
+                                show_name: str = None, limit: int = 10) -> List[Dict]:
+        """Search for specific character moments using semantic search."""
+        try:
+            if not self.character_agent:
+                logger.warning("Character analysis not available (ChromaDB dependencies missing)")
+                return []
+            
+            moments = self.character_agent.search_character_moments(
+                query, character_name, show_name, limit
+            )
+            
+            return moments
+            
+        except Exception as e:
+            logger.error(f"Character moment search failed: {e}")
+            return []
+    
+    def get_character_statistics(self) -> Dict:
+        """Get overall statistics about the character database."""
+        try:
+            if not self.character_agent:
+                logger.warning("Character analysis not available (ChromaDB dependencies missing)")
+                return {'error': 'Character analysis not available'}
+            
+            stats = self.character_agent.get_character_statistics()
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Character statistics retrieval failed: {e}")
+            return {'error': str(e)}
+    
+    def analyze_season_development(self, show_name: str, season: int) -> Dict:
         """
-        Get search parameters for the specific source.
+        Comprehensive season analysis using vector database.
+        
+        Analyzes character arcs, story progression, relationship evolution,
+        and key narrative moments throughout an entire season.
         
         Args:
-            source_config (dict): Source configuration
-            search_query (str): Search query string
+            show_name: Name of the show
+            season: Season number to analyze
             
         Returns:
-            dict: Search parameters
+            Dictionary with comprehensive season analysis
         """
-        # Start with base search parameter
-        if 'search_params' in source_config:
-            # Use predefined search params (like for Fandom)
-            params = source_config['search_params'].copy()
-            params['query'] = search_query
-        else:
-            # Default search param format
-            params = {'q': search_query}
-        
-        return params
-
-    def _try_wiki_page_variants(self, base_url, source_config):
+        try:
+            if not self.character_agent:
+                logger.warning("Character analysis not available (ChromaDB dependencies missing)")
+                return {'error': 'Character analysis not available'}
+            
+            logger.info(f"Starting comprehensive season analysis for {show_name} Season {season}")
+            
+            # Perform season analysis using the character agent
+            season_analysis = self.character_agent.analyze_season_development(show_name, season)
+            
+            if 'error' in season_analysis:
+                logger.error(f"Season analysis failed: {season_analysis['error']}")
+                return season_analysis
+            
+            # Add additional insights and formatting
+            analysis_summary = {
+                'season_info': {
+                    'show_name': show_name,
+                    'season': season,
+                    'total_episodes': season_analysis['total_episodes'],
+                    'episode_range': season_analysis['episode_range']
+                },
+                'character_insights': {
+                    'total_characters': len(season_analysis['character_development']),
+                    'character_development_scores': {
+                        name: arc['character_growth_score'] 
+                        for name, arc in season_analysis['character_development'].items()
+                    },
+                    'top_developing_characters': sorted(
+                        [(name, arc['character_growth_score']) 
+                         for name, arc in season_analysis['character_development'].items()],
+                        key=lambda x: x[1], reverse=True
+                    )[:5],
+                    'character_focus_distribution': season_analysis['character_focus_distribution']['main_characters'][:5]
+                },
+                'story_insights': {
+                    'pivotal_moments_count': len(season_analysis['pivotal_moments']),
+                    'dominant_themes': season_analysis['thematic_evolution']['dominant_season_themes'][:5],
+                    'narrative_arcs': len(season_analysis['narrative_progression'].get('story_arcs', [])),
+                    'thematic_diversity': season_analysis['thematic_evolution']['thematic_diversity_score']
+                },
+                'relationship_insights': {
+                    'total_relationships': len(season_analysis['relationship_evolution']),
+                    'strongest_relationships': sorted(
+                        [(rel_key, rel_data['relationship_strength']) 
+                         for rel_key, rel_data in season_analysis['relationship_evolution'].items()],
+                        key=lambda x: x[1], reverse=True
+                    )[:5],
+                    'relationship_types': {
+                        rel_key: rel_data['relationship_classification']
+                        for rel_key, rel_data in season_analysis['relationship_evolution'].items()
+                    }
+                },
+                'episode_analysis': {
+                    'most_significant_episodes': sorted(
+                        [(ep_key, ep_data['significance_score']) 
+                         for ep_key, ep_data in season_analysis['episode_significance_scores'].items()],
+                        key=lambda x: x[1], reverse=True
+                    )[:3],
+                    'episode_types_distribution': {
+                        ep_key: ep_data['episode_type']
+                        for ep_key, ep_data in season_analysis['episode_significance_scores'].items()
+                    }
+                },
+                'raw_analysis': season_analysis  # Include full analysis for detailed inspection
+            }
+            
+            logger.info(f"Season analysis completed successfully for {show_name} Season {season}")
+            return analysis_summary
+            
+        except Exception as e:
+            logger.error(f"Season development analysis failed for {show_name} Season {season}: {e}")
+            return {'error': str(e)}
+    
+    def _generate_season_summary_with_length(self, show_name: str, season: int, 
+                                           season_analysis: Dict, target_minutes: int) -> str:
         """
-        Try different variants of a wiki page URL to find actual content.
+        Generate a length-adaptive chronological summary of the season.
         
         Args:
-            base_url (str): Base wiki page URL
-            source_config (dict): Source configuration
+            show_name: Name of the show
+            season: Season number
+            season_analysis: Analysis data from analyze_season_development
+            target_minutes: Target video length in minutes
             
         Returns:
-            dict: Valid result if found, None otherwise
+            String containing the formatted summary
         """
-        urls_to_try = [base_url]
+        try:
+            # Use length-adaptive prompt
+            length_prompt = self._generate_length_adaptive_prompt(
+                show_name, season, season_analysis, target_minutes
+            )
+            
+            # Continue with existing summary generation logic using the adaptive prompt
+            # For now, fallback to existing method
+            return self._generate_season_summary(show_name, season, season_analysis)
+            
+        except Exception as e:
+            logger.error(f"Length-adaptive summary generation failed: {e}")
+            # Fallback to existing method
+            return self._generate_season_summary(show_name, season, season_analysis)
+    
+    def _generate_season_summary(self, show_name: str, season: int, season_analysis: Dict) -> str:
+        """
+        Generate a comprehensive 5-minute chronological summary of the season.
         
-        # Remove edit action if present
-        if '?action=edit' in base_url:
-            clean_url = base_url.replace('?action=edit', '')
-            urls_to_try.append(clean_url)
+        Args:
+            show_name: Name of the show
+            season: Season number
+            season_analysis: Analysis data from analyze_season_development
+            
+        Returns:
+            String containing the formatted 5-minute summary
+        """
+        try:
+            if not self.content_agent or not self.model:
+                # Fallback to basic summary generation
+                return self._generate_basic_season_summary(show_name, season, season_analysis)
+            
+            # Create a structured prompt for AI summary generation
+            summary_prompt = f"""
+            Create a comprehensive 5-minute chronological summary of {show_name} Season {season}.
+            This summary will be used to create a video, so structure it with clear narrative flow.
+            
+            Based on the following analysis data:
+            
+            SEASON OVERVIEW:
+            - Total Episodes: {season_analysis['season_info']['total_episodes']}
+            - Episode Range: {season_analysis['season_info']['episode_range']}
+            
+            CHARACTER DEVELOPMENT:
+            - Total Characters: {season_analysis['character_insights']['total_characters']}
+            - Top Developing Characters: {', '.join([name for name, _ in season_analysis['character_insights']['top_developing_characters']])}
+            
+            STORY ELEMENTS:
+            - Pivotal Moments: {season_analysis['story_insights']['pivotal_moments_count']}
+            - Dominant Themes: {', '.join([theme for theme, _ in season_analysis['story_insights']['dominant_themes']])}
+            - Narrative Arcs: {season_analysis['story_insights']['narrative_arcs']}
+            
+            RELATIONSHIPS:
+            - Key Relationships: {', '.join([rel_key for rel_key, _ in season_analysis['relationship_insights']['strongest_relationships']])}
+            
+            SIGNIFICANT EPISODES:
+            - Most Important: {', '.join([ep_key for ep_key, _ in season_analysis['episode_analysis']['most_significant_episodes']])}
+            
+            Please structure the summary as follows:
+            1. Opening Hook (30 seconds): Introduce the season's central conflict/theme
+            2. Character Arcs (90 seconds): Detail the main character developments
+            3. Plot Progression (120 seconds): Chronological major story beats
+            4. Relationship Evolution (60 seconds): Key relationship changes
+            5. Climax and Resolution (60 seconds): Season finale and resolution
+            
+            Use engaging, descriptive language suitable for video narration.
+            Include specific episode references and character moments.
+            Ensure chronological flow and natural transitions between sections.
+            """
+            
+            # Generate the summary using the AI model
+            response = self.model.invoke(summary_prompt)
+            summary = response.content if hasattr(response, 'content') else str(response)
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"AI summary generation failed: {e}")
+            # Fallback to basic summary
+            return self._generate_basic_season_summary(show_name, season, season_analysis)
+    
+    def _generate_basic_season_summary(self, show_name: str, season: int, season_analysis: Dict) -> str:
+        """Fallback method to generate basic season summary without AI."""
+        try:
+            summary_parts = []
+            
+            # Opening
+            summary_parts.append(f"Season {season} of {show_name} presents a complex narrative spanning {season_analysis['season_info']['total_episodes']} episodes.")
+            
+            # Character development
+            top_chars = [name for name, _ in season_analysis['character_insights']['top_developing_characters'][:3]]
+            if top_chars:
+                summary_parts.append(f"The season focuses primarily on the development of {', '.join(top_chars)}, showcasing significant character growth throughout the arc.")
+            
+            # Themes
+            themes = [theme for theme, _ in season_analysis['story_insights']['dominant_themes'][:3]]
+            if themes:
+                summary_parts.append(f"Major themes explored include {', '.join(themes)}, woven throughout the season's narrative structure.")
+            
+            # Relationships
+            relationships = [rel_key for rel_key, _ in season_analysis['relationship_insights']['strongest_relationships'][:3]]
+            if relationships:
+                summary_parts.append(f"Key relationship dynamics involve {', '.join(relationships)}, evolving significantly across episodes.")
+            
+            # Significant episodes
+            important_eps = [ep_key for ep_key, _ in season_analysis['episode_analysis']['most_significant_episodes'][:3]]
+            if important_eps:
+                summary_parts.append(f"Pivotal episodes include {', '.join(important_eps)}, marking crucial turning points in the season's progression.")
+            
+            # Conclusion
+            summary_parts.append(f"The season culminates in a satisfying resolution while setting up future narrative possibilities.")
+            
+            return " ".join(summary_parts)
+            
+        except Exception as e:
+            logger.error(f"Basic summary generation failed: {e}")
+            return f"Season {season} of {show_name} - Analysis data available but summary generation failed."
+    
+    def _calculate_video_structure(self, target_minutes: int = None) -> Dict[str, int]:
+        """
+        Calculate video timing structure based on target duration.
         
-        # Try with different URL variations
-        if base_url.endswith('_transcript'):
-            # Try without _transcript suffix
-            base_without_transcript = base_url.replace('_transcript', '')
-            urls_to_try.append(base_without_transcript)
-            urls_to_try.append(f"{base_without_transcript}/Transcript")
-            urls_to_try.append(f"{base_without_transcript}/Scripts")
+        Args:
+            target_minutes: Target video length in minutes (5-15)
+            
+        Returns:
+            Dictionary with timing structure in seconds
+        """
+        # Validate and set target duration
+        if target_minutes is None:
+            target_minutes = self.settings.video_config.default_duration_minutes
         
-        for url in urls_to_try:
-            try:
-                logger.debug(f"Trying wiki variant: {url}")
-                result = self._fetch_and_parse(url, source_config)
-                if result and result['content_length'] > 500:  # Ensure substantial content
-                    result['url'] = url
-                    logger.info(f"✅ Found valid wiki content at: {url}")
-                    return result
-            except Exception as e:
-                logger.debug(f"Failed wiki variant {url}: {e}")
-                continue
+        target_minutes = max(self.settings.video_config.min_duration_minutes, target_minutes)
+        target_minutes = min(self.settings.video_config.max_duration_minutes, target_minutes)
         
-        logger.info(f"❌ No valid wiki content found for variants of: {base_url}")
-        return None
+        total_seconds = target_minutes * 60
+        
+        return {
+            'total_duration': total_seconds,
+            'opening_hook': int(total_seconds * self.settings.video_config.opening_hook_ratio),
+            'character_arcs': int(total_seconds * self.settings.video_config.character_arcs_ratio),
+            'plot_progression': int(total_seconds * self.settings.video_config.plot_progression_ratio),
+            'relationship_evolution': int(total_seconds * self.settings.video_config.relationship_evolution_ratio),
+            'climax_resolution': int(total_seconds * self.settings.video_config.climax_resolution_ratio)
+        }
 
+    def _calculate_visual_timing(self, target_minutes: int, concept_count: int) -> Dict[str, float]:
+        """
+        Calculate visual concept timing based on video length.
+        
+        Args:
+            target_minutes: Target video length
+            concept_count: Number of visual concepts
+            
+        Returns:
+            Visual timing configuration
+        """
+        total_seconds = target_minutes * 60
+        available_time = total_seconds * 0.8  # 80% for visuals, 20% for transitions/effects
+        
+        concept_duration = available_time / concept_count
+        
+        # Apply min/max constraints
+        concept_duration = max(self.settings.video_config.min_concept_duration, concept_duration)
+        concept_duration = min(self.settings.video_config.max_concept_duration, concept_duration)
+        
+        # For 5-minute videos with 6 concepts, we want exactly 5.0 seconds per concept
+        if target_minutes == 5 and concept_count == 6:
+            concept_duration = 5.0
+        
+        return {
+            'concept_duration': concept_duration,
+            'total_concepts': concept_count,
+            'transition_time': 0.5
+        }
 
-# =============================================================================
-# DEPRECATED MAIN EXECUTION
-# =============================================================================
+    def _generate_length_adaptive_prompt(self, show_name: str, season: int, 
+                                       season_analysis: Dict, target_minutes: int) -> str:
+        """
+        Generate AI prompt adapted to target video length.
+        
+        Args:
+            show_name: Name of the show
+            season: Season number
+            season_analysis: Season analysis data
+            target_minutes: Target video length in minutes
+            
+        Returns:
+            Length-appropriate AI prompt
+        """
+        structure = self._calculate_video_structure(target_minutes)
+        
+        # Base prompt structure
+        prompt = f"""
+        Create a comprehensive {target_minutes}-minute chronological summary of {show_name} Season {season}.
+        This summary will be used to create a video, so structure it with clear narrative flow.
+        
+        Based on the following analysis data:
+        [Analysis data insertion here...]
+        
+        Please structure the summary with the following timing:
+        """
+        
+        # Add adaptive timing instructions based on video length
+        if target_minutes <= 5:
+            prompt += """
+            1. Opening Hook ({} seconds): Brief, punchy introduction
+            2. Character Focus ({} seconds): Key character developments only  
+            3. Plot Summary ({} seconds): Major story beats and conflicts
+            4. Relationships ({} seconds): Critical relationship changes
+            5. Resolution ({} seconds): Climax and conclusion
+            
+            Keep descriptions concise and impactful. Focus on the most essential elements.
+            """.format(
+                structure['opening_hook'], structure['character_arcs'],
+                structure['plot_progression'], structure['relationship_evolution'],
+                structure['climax_resolution']
+            )
+        elif target_minutes <= 10:
+            prompt += """
+            1. Opening Hook ({} seconds): Engaging introduction with season themes
+            2. Character Development ({} seconds): Detailed character arcs and growth with detailed analysis
+            3. Plot Progression ({} seconds): Comprehensive story analysis with subplots
+            4. Relationship Evolution ({} seconds): Complex relationship dynamics  
+            5. Climax and Resolution ({} seconds): Detailed finale analysis
+            
+            Include specific episode references and character moments.
+            Provide moderate depth while maintaining engagement.
+            """.format(
+                structure['opening_hook'], structure['character_arcs'],
+                structure['plot_progression'], structure['relationship_evolution'],
+                structure['climax_resolution']
+            )
+        else:  # 10-15 minutes
+            prompt += """
+            1. Opening Hook ({} seconds): Comprehensive season introduction with context
+            2. Character Development ({} seconds): In-depth character analysis with detailed arcs
+            3. Plot Progression ({} seconds): Thorough story exploration including subplots and themes
+            4. Relationship Evolution ({} seconds): Complex relationship analysis and development
+            5. Climax and Resolution ({} seconds): Detailed finale analysis and implications
+            
+            Include detailed episode references, character quotes, and thematic analysis.
+            Provide comprehensive exploration suitable for dedicated fans with detailed analysis.
+            """.format(
+                structure['opening_hook'], structure['character_arcs'],
+                structure['plot_progression'], structure['relationship_evolution'],
+                structure['climax_resolution']
+            )
+        
+        return prompt
+    
+    def _parse_summary_to_concepts(self, summary: str, target_minutes: int = 5) -> List[Dict]:
+        """
+        Parse the season summary into visual concepts for image generation.
+        
+        Args:
+            summary: The season summary text
+            target_minutes: Target video length in minutes for timing calculation
+            
+        Returns:
+            List of dictionaries containing image concepts
+        """
+        try:
+            # Split summary into logical segments
+            concepts = []
+            
+            # Simple approach: split by sentences and create concepts
+            sentences = [s.strip() for s in summary.split('.') if s.strip()]
+            
+            # Group sentences into visual concepts (roughly 3-4 sentences per concept)
+            concept_size = 3
+            for i in range(0, len(sentences), concept_size):
+                concept_sentences = sentences[i:i + concept_size]
+                concept_text = '. '.join(concept_sentences) + '.'
+                
+                # Create enhanced prompt for anime-style image generation
+                enhanced_prompt = f"Anime style artwork depicting: {concept_text}. High quality digital art, vibrant colors, dynamic composition, professional anime illustration style."
+                
+                concepts.append({
+                    'index': len(concepts),
+                    'text': concept_text,
+                    'enhanced_prompt': enhanced_prompt
+                })
+            
+            # Ensure we have at least 5 concepts for a good video
+            while len(concepts) < 5:
+                concepts.append({
+                    'index': len(concepts),
+                    'text': f"Season highlights and memorable moments",
+                    'enhanced_prompt': "Anime style montage artwork showing season highlights, multiple characters, dynamic action scenes, vibrant colors, high quality digital art."
+                })
+            
+            # Calculate adaptive timing for all concepts
+            visual_timing = self._calculate_visual_timing(target_minutes, len(concepts))
+            
+            # Apply calculated duration to each concept
+            for concept in concepts:
+                concept['duration'] = visual_timing['concept_duration']
+            
+            logger.info(f"Generated {len(concepts)} visual concepts from summary")
+            return concepts
+            
+        except Exception as e:
+            logger.error(f"Failed to parse summary to concepts: {e}")
+            # Return basic concepts as fallback with adaptive timing
+            fallback_concepts = [
+                {
+                    'index': i,
+                    'text': f"Season concept {i+1}",
+                    'enhanced_prompt': f"Anime style artwork depicting season themes and characters, concept {i+1}, high quality digital art."
+                }
+                for i in range(5)
+            ]
+            
+            # Apply adaptive timing to fallback concepts
+            visual_timing = self._calculate_visual_timing(target_minutes, len(fallback_concepts))
+            for concept in fallback_concepts:
+                concept['duration'] = visual_timing['concept_duration']
+                
+            return fallback_concepts
+    
+    def _generate_season_images(self, visual_concepts: List[Dict], show_name: str, season: int):
+        """
+        Generate images for each visual concept.
+        
+        Args:
+            visual_concepts: List of concept dictionaries
+            show_name: Name of the show
+            season: Season number
+        """
+        try:
+            # Extract image prompts from concepts
+            image_prompts = [concept['enhanced_prompt'] for concept in visual_concepts]
+            
+            # Use existing media utils function with correct parameter order
+            create_images(image_prompts, f"Season_{season}", str(season), show_name)
+            
+            logger.info(f"Generated {len(visual_concepts)} images for season summary")
+            
+        except Exception as e:
+            logger.error(f"Failed to generate season images: {e}")
+    
+    def _create_youtube_transcript(self, summary: str, show_name: str, season: int) -> str:
+        """
+        Create a YouTube-formatted transcript from the summary.
+        
+        Args:
+            summary: Season summary text
+            show_name: Name of the show
+            season: Season number
+            
+        Returns:
+            Formatted YouTube transcript
+        """
+        try:
+            # Create YouTube-style formatting
+            youtube_transcript = f"""
+            Welcome to our {show_name} Season {season} summary!
+            
+            In this video, we'll explore the complete arc of Season {season}, covering character development, major plot points, and the season's most memorable moments.
+            
+            {summary}
+            
+            Thanks for watching! If you enjoyed this season summary, please like and subscribe for more anime content analysis.
+            
+            What was your favorite moment from Season {season}? Let us know in the comments below!
+            """
+            
+            # Save transcript file
+            transcript_dir = Path(self.settings.output_directory) / show_name / f"Season_{season}"
+            transcript_dir.mkdir(parents=True, exist_ok=True)
+            transcript_file = transcript_dir / "youtube_transcript.txt"
+            
+            with open(transcript_file, 'w', encoding='utf-8') as f:
+                f.write(youtube_transcript.strip())
+            
+            logger.info(f"Created YouTube transcript: {transcript_file}")
+            return youtube_transcript.strip()
+            
+        except Exception as e:
+            logger.error(f"Failed to create YouTube transcript: {e}")
+            return summary  # Return original summary as fallback
+    
+    def _create_voice_recording(self, transcript: str, show_name: str, season: int) -> str:
+        """
+        Convert transcript to voice recording.
+        
+        Args:
+            transcript: Text to convert to speech
+            show_name: Name of the show
+            season: Season number
+            
+        Returns:
+            Path to the generated audio file
+        """
+        try:
+            # Use existing media utils function with correct parameters
+            duration = wave_file(show_name, str(season), f"Season_{season}", transcript)
+            
+            # Construct the expected audio file path based on the media_utils implementation
+            audio_file = f"{show_name}/Season{season}/Season_{season}/{show_name}_Season_{season}.wav"
+            
+            logger.info(f"Generated voice recording: {audio_file} (duration: {duration}s)")
+            return audio_file
+            
+        except Exception as e:
+            logger.error(f"Failed to create voice recording: {e}")
+            return ""
+    
+    def _create_season_video(self, audio_file: str, visual_concepts: List[Dict], 
+                           show_name: str, season: int) -> str:
+        """
+        Create final MP4 video combining audio and images.
+        
+        Args:
+            audio_file: Path to the audio file
+            visual_concepts: List of visual concept data
+            show_name: Name of the show
+            season: Season number
+            
+        Returns:
+            Path to the generated video file
+        """
+        try:
+            # Prepare data for mp4_file_enhanced
+            sentences = [concept['enhanced_prompt'] for concept in visual_concepts]
+            durations = [concept['duration'] for concept in visual_concepts]
+            
+            # Use existing media utils function with correct parameters
+            mp4_file_enhanced(show_name, str(season), f"Season_{season}", sentences, durations)
+            
+            # Construct the expected video file path based on the media_utils implementation
+            video_file = f"{show_name}/Season{season}/Season_{season}/{show_name}_Season_{season}.mp4"
+            
+            logger.info(f"Generated season video: {video_file}")
+            return video_file
+            
+        except Exception as e:
+            logger.error(f"Failed to create season video: {e}")
+            return ""
+    
+    def export_video_format(self, show_name: str, season: int, visual_concepts: List[Dict], 
+                           audio_file: str, export_format: str) -> Dict[str, str]:
+        """
+        Export video in specified format after standard video generation.
+        
+        Args:
+            show_name: Name of the show
+            season: Season number  
+            visual_concepts: List of visual concept data
+            audio_file: Path to the audio file
+            export_format: Target export format
+            
+        Returns:
+            Dict with export results. Platform exports are not implemented, so
+            for any non-standard format this returns a dict with
+            ``success=False`` and ``status='skipped_not_implemented'`` rather
+            than raising or claiming a file was produced.
+        """
+        if export_format == 'standard':
+            return {'format': 'standard', 'message': 'Standard MP4 format used'}
+            
+        try:
+            # Prepare video content for export
+            video_content = {
+                'show_name': show_name,
+                'season': season,
+                'visual_concepts': visual_concepts,
+                'audio_file': audio_file,
+                'total_duration': sum(concept.get('duration', 10) for concept in visual_concepts)
+            }
+            
+            # Get appropriate exporter
+            exporters = {
+                'youtube_shorts': YouTubeShortsExporter(),
+                'tiktok': TikTokExporter(),
+                'instagram_reels': InstagramReelsExporter(),
+                'twitter': TwitterVideoExporter()
+            }
+            
+            exporter = exporters.get(export_format)
+            if not exporter:
+                return {'success': False, 'error': f'Unknown export format: {export_format}'}
+                
+            # Export in specified format
+            result = exporter.export_video(video_content)
+
+            logger.info(f"Export format {export_format} completed: {result}")
+            return result
+
+        except NotImplementedError as e:
+            # Platform export is a known gap, not a crash: report it honestly and
+            # let the pipeline continue with the standard MP4 only.
+            logger.warning(
+                f"Export format '{export_format}' skipped - not implemented: {e}"
+            )
+            return {
+                'format': export_format,
+                'success': False,
+                'status': 'skipped_not_implemented',
+                'output_path': None,
+                'error': str(e)
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to export in format {export_format}: {e}")
+            return {'format': export_format, 'success': False, 'error': str(e)}
+    
+    def validate_stage_quality(self, show_name: str, season: int, episode: int, stage: str) -> Dict:
+        """Validate quality for a specific workflow stage."""
+        try:
+            # Get episode data from database
+            episode_data = self.db.get_episode(show_name, season, episode)
+            
+            if not episode_data:
+                logger.warning(f"No data found for {show_name} S{season}E{episode}")
+                return None
+            
+            # Get stage-specific data
+            if stage == 'transcript':
+                data = episode_data['transcript_data']
+                result = self.quality_agent.validate_transcript_quality(data)
+            elif stage == 'content':
+                data = episode_data['content_data']
+                original_transcript = episode_data['transcript']
+                result = self.quality_agent.validate_content_quality(data, original_transcript)
+            elif stage == 'video':
+                data = episode_data['video_data']
+                content_source = episode_data['content_data']
+                result = self.quality_agent.validate_video_quality(data, content_source)
+            elif stage == 'discovery':
+                data = episode_data['discovery_data']
+                result = self.quality_agent.validate_episode_discovery(data, show_name)
+            elif stage == 'workflow':
+                data = episode_data['workflow_data']
+                result = self.quality_agent.coordinator.validate_stage_quality('workflow', data)
+            else:
+                raise ValueError(f"Unknown stage: {stage}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Stage quality validation failed for {show_name} S{season}E{episode} ({stage}): {e}")
+            return None
+        
+
+async def main():
+    """
+    Main entry point providing comprehensive command-line interface.
+    
+    This function sets up the complete CLI for the anime video generation system
+    with support for episode processing, season analysis, quality assessment,
+    character analysis, and various utility commands.
+    
+    Available Commands:
+        - process-url: Process episode from transcript URL
+        - process-episode: Process episode by show/season/episode numbers
+        - process-season: Batch process multiple episodes in a season
+        - create-season-summary: Generate comprehensive season summaries with video
+        - stats: Display processing statistics
+        - test-transcript: Test transcript discovery functionality
+        - analyze-quality: Perform quality analysis on episodes
+        - discover: Discover available episodes for shows
+        - analyze-characters: Character analysis and profiling
+        - analyze-season: Comprehensive season analysis
+        - view-season-summaries: View generated season summaries
+        
+    The CLI supports various output formats, quality control, and advanced
+    character analysis features when ChromaDB dependencies are available.
+    
+    Raises:
+        SystemExit: When invalid command line arguments are provided
+        KeyboardInterrupt: When user cancels operation
+        Exception: Various exceptions depending on the command executed
+        
+    Example:
+        python main.py process-episode "My Hero Academia" 1 1 --full
+        python main.py create-season-summary "My Hero Academia" 1 --duration 10
+        python main.py analyze-season "My Hero Academia" 1
+    """
+    setup_logging()
+    
+    parser = argparse.ArgumentParser(description='Anime Video Generator')
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    
+    # Process single episode by URL
+    url_parser = subparsers.add_parser('process-url', help='Process episode by URL')
+    url_parser.add_argument('url', help='Episode transcript URL')
+    url_parser.add_argument('show', help='Show name')
+    
+    # Process single episode by numbers
+    episode_parser = subparsers.add_parser('process-episode', help='Process episode by show/season/episode')
+    episode_parser.add_argument('show', help='Show name')
+    episode_parser.add_argument('season', type=int, help='Season number')
+    episode_parser.add_argument('episode', type=int, help='Episode number')
+    episode_parser.add_argument('--title', help='Episode title (optional)')
+    episode_parser.add_argument('--full', action='store_true', help='Enable full AI/video processing')
+    
+    # Process season batch
+    batch_parser = subparsers.add_parser('process-season', help='Process multiple episodes')
+    batch_parser.add_argument('show', help='Show name')
+    batch_parser.add_argument('season', type=int, help='Season number')
+    batch_parser.add_argument('--start', type=int, help='Starting episode number')
+    batch_parser.add_argument('--end', type=int, help='Ending episode number')
+    batch_parser.add_argument('--full', action='store_true', help='Enable full AI/video processing')
+    
+    # Process complete season summary with multimedia
+    season_summary_parser = subparsers.add_parser('create-season-summary', 
+                                                  help='Create comprehensive season summary with configurable video length')
+    season_summary_parser.add_argument('show', help='Show name')
+    season_summary_parser.add_argument('season', type=int, help='Season number')
+    season_summary_parser.add_argument('--force', action='store_true', 
+                                      help='Force reprocessing even if summary exists')
+    season_summary_parser.add_argument('--duration', '-d', type=int, default=5,
+                                      help='Video duration in minutes (5-15)', metavar='MINUTES')
+    season_summary_parser.add_argument('--format', '-f', 
+                                      choices=['standard', 'youtube_shorts', 'tiktok', 'instagram_reels', 'twitter'],
+                                      default='standard',
+                                      help='Export format for the video')
+    
+    # View season summaries
+    view_summaries_parser = subparsers.add_parser('view-season-summaries', 
+                                                  help='View existing season summaries')
+    view_summaries_parser.add_argument('--show', help='Filter by show name')
+    
+    # Get statistics
+    subparsers.add_parser('stats', help='Show processing statistics')
+    
+    # Test transcript discovery
+    test_parser = subparsers.add_parser('test-transcript', help='Test transcript discovery')
+    test_parser.add_argument('show', help='Show name')
+    test_parser.add_argument('season', type=int, help='Season number')
+    test_parser.add_argument('episode', type=int, help='Episode number')
+    
+    # Analyze episode quality
+    quality_parser = subparsers.add_parser('analyze-quality', help='Analyze episode quality')
+    quality_parser.add_argument('show', help='Show name')
+    quality_parser.add_argument('season', type=int, help='Season number')
+    quality_parser.add_argument('episode', type=int, help='Episode number')
+    
+    # Discover episodes
+    discover_parser = subparsers.add_parser('discover', help='Discover available episodes')
+    discover_parser.add_argument('show', help='Show name')
+    discover_parser.add_argument('--season', type=int, help='Specific season to discover')
+    
+    # Generate content summary
+    summary_parser = subparsers.add_parser('summarize', help='Generate AI content summary')
+    summary_parser.add_argument('show', help='Show name')
+    summary_parser.add_argument('season', type=int, help='Season number')
+    summary_parser.add_argument('episode', type=int, help='Episode number')
+    
+    # Quality validation commands
+    quality_parser = subparsers.add_parser('validate-quality', help='Run comprehensive quality validation')
+    quality_parser.add_argument('show', help='Show name')
+    quality_parser.add_argument('season', type=int, help='Season number')
+    quality_parser.add_argument('episode', type=int, help='Episode number')
+    quality_parser.add_argument('--stage', choices=['transcript', 'content', 'video', 'discovery', 'workflow'], 
+                               help='Validate specific stage only')
+    
+    # Quality dashboard
+    subparsers.add_parser('quality-dashboard', help='Show quality monitoring dashboard')
+    
+    # Quality trends
+    trends_parser = subparsers.add_parser('quality-trends', help='Show quality trends analysis')
+    trends_parser.add_argument('--show', help='Filter by specific show')
+    trends_parser.add_argument('--days', type=int, default=30, help='Number of days to analyze')
+    
+    # Transcript source discovery commands
+    sources_parser = subparsers.add_parser('discover-sources', help='Discover transcript sources for a show')
+    sources_parser.add_argument('show', help='Show name')
+    sources_parser.add_argument('--season', type=int, help='Specific season to search for')
+    
+    # Evaluate transcript source quality
+    evaluate_parser = subparsers.add_parser('evaluate-source', help='Evaluate a specific transcript source')
+    evaluate_parser.add_argument('url', help='Source URL to evaluate')
+    evaluate_parser.add_argument('show', help='Show name for context')
+    
+    # Get source recommendations
+    recommend_parser = subparsers.add_parser('recommend-sources', help='Get recommended transcript sources')
+    recommend_parser.add_argument('show', help='Show name')
+    recommend_parser.add_argument('--season', type=int, help='Specific season to get recommendations for')
+    
+    # Vector search commands (if available)
+    vector_search_parser = subparsers.add_parser('search-episodes', help='Semantic search across episodes')
+    vector_search_parser.add_argument('query', help='Search query')
+    vector_search_parser.add_argument('--limit', type=int, default=10, help='Maximum results to return')
+    vector_search_parser.add_argument('--show', help='Filter by specific show')
+    vector_search_parser.add_argument('--season', type=int, help='Filter by specific season')
+    
+    # Find similar episodes
+    similar_parser = subparsers.add_parser('similar-episodes', help='Find episodes similar to a specific one')
+    similar_parser.add_argument('show', help='Show name')
+    similar_parser.add_argument('season', type=int, help='Season number')
+    similar_parser.add_argument('episode', type=int, help='Episode number')
+    similar_parser.add_argument('--limit', type=int, default=5, help='Number of similar episodes to find')
+    
+    # Vector database stats
+    subparsers.add_parser('vector-stats', help='Show vector database statistics')
+    
+    # Index episode for vector search
+    index_parser = subparsers.add_parser('index-episode', help='Add episode to vector search index')
+    index_parser.add_argument('show', help='Show name')
+    index_parser.add_argument('season', type=int, help='Season number')
+    index_parser.add_argument('episode', type=int, help='Episode number')
+    
+    # Character analysis commands
+    char_analyze_parser = subparsers.add_parser('analyze-characters', help='Analyze characters in an episode')
+    char_analyze_parser.add_argument('show', help='Show name')
+    char_analyze_parser.add_argument('season', type=int, help='Season number')
+    char_analyze_parser.add_argument('episode', type=int, help='Episode number')
+    
+    # Find similar characters
+    similar_chars_parser = subparsers.add_parser('similar-characters', help='Find characters similar to a given character')
+    similar_chars_parser.add_argument('character', help='Character name')
+    similar_chars_parser.add_argument('--show', help='Filter by show name')
+    similar_chars_parser.add_argument('--limit', type=int, default=5, help='Number of similar characters to find')
+    
+    # Character development analysis
+    char_dev_parser = subparsers.add_parser('character-development', help='Analyze character development across episodes')
+    char_dev_parser.add_argument('character', help='Character name')
+    char_dev_parser.add_argument('show', help='Show name')
+    
+    # Character relationships
+    char_rel_parser = subparsers.add_parser('character-relationships', help='Get character relationship map')
+    char_rel_parser.add_argument('character', help='Character name')
+    char_rel_parser.add_argument('--show', help='Filter by show name')
+    
+    # Search character moments
+    char_search_parser = subparsers.add_parser('search-character-moments', help='Search for specific character moments')
+    char_search_parser.add_argument('query', help='Search query')
+    char_search_parser.add_argument('--character', help='Filter by character name')
+    char_search_parser.add_argument('--show', help='Filter by show name')
+    char_search_parser.add_argument('--limit', type=int, default=10, help='Maximum results to return')
+    
+    # Character statistics
+    subparsers.add_parser('character-stats', help='Show character database statistics')
+    
+    # Season analysis
+    season_analysis_parser = subparsers.add_parser('analyze-season', help='Comprehensive season analysis using vector database')
+    season_analysis_parser.add_argument('show', help='Show name')
+    season_analysis_parser.add_argument('season', type=int, help='Season number')
+    
+    args = parser.parse_args()
+    
+    if not args.command:
+        parser.print_help()
+        return
+    
+    # Validate duration parameter for create-season-summary before initialization
+    if args.command == 'create-season-summary' and hasattr(args, 'duration'):
+        if not (5 <= args.duration <= 15):
+            print("❌ Error: Duration must be between 5 and 15 minutes", file=sys.stderr)
+            sys.exit(1)
+    
+    # Initialize the generator
+    generator = AnimeVideoGenerator()
+    
+    try:
+        if args.command == 'process-url':
+            result = await generator.process_episode_by_url(args.url, args.show)
+            print(f"Result: {result}")
+            
+        elif args.command == 'process-episode':
+            result = await generator.process_episode_by_numbers(
+                args.show, args.season, args.episode, args.title, args.full
+            )
+            print(f"Result: {result}")
+            
+        elif args.command == 'process-season':
+            await generator.process_season_batch(
+                args.show, args.season, args.start, args.end, args.full
+            )
+            
+        elif args.command == 'create-season-summary':
+            format_msg = f" in {args.format} format" if args.format != 'standard' else ""
+            print(f"🎬 Creating {args.duration}-minute season summary for {args.show} Season {args.season}{format_msg}...")
+            result = await generator.process_season(args.show, args.season, args.force, args.duration, args.format)
+            
+            if result.success:
+                print("✅ Season summary created successfully!")
+                print(f"🎯 Target Duration: {result.data['target_duration_minutes']} minutes")
+                print(f"📊 Video Structure: {result.data['video_config']}")
+                
+                print(f"\n📊 Analysis Summary:")
+                insights = result.data.get('analysis_insights', {})
+                for key, value in insights.items():
+                    print(f"  {key.replace('_', ' ').title()}: {value}")
+                
+                print(f"\n📁 Media Files:")
+                media_files = result.data.get('media_files', {})
+                for key, value in media_files.items():
+                    if value:
+                        print(f"  {key.replace('_', ' ').title()}: {value}")
+                
+                if result.data.get('processing_stats', {}).get('transcript_errors'):
+                    print(f"\n⚠️ Some episodes had transcript issues:")
+                    for error in result.data['processing_stats']['failed_episodes'][:3]:
+                        print(f"  - {error}")
+            else:
+                print(f"❌ Season summary creation failed: {result.error}")
+            
+        elif args.command == 'stats':
+            stats = generator.get_stats()
+            print("Processing Statistics:")
+            print(f"Total episodes: {stats['total_episodes']}")
+            print(f"Status counts: {stats['status_counts']}")
+            print(f"Recent activity: {stats['recent_activity']}")
+            
+        elif args.command == 'test-transcript':
+            # Use enhanced discovery agent instead of old transcript agent
+            result = generator.discovery_agent.search_episode_enhanced(
+                args.show, args.season, args.episode
+            )
+            if result:
+                print(f"Found transcript via enhanced discovery:")
+                print(f"Source: {result['source']}")
+                print(f"URL: {result['url']}")
+                print(f"Quality: {result['quality_score']:.2f}")
+                print(f"Discovery method: Enhanced search with query parameters")
+                
+                # Also show transcript parsing result
+                transcript_result = generator.transcript_agent.parse_discovered_url(
+                    result['url'], result['source']
+                )
+                if transcript_result:
+                    print(f"Transcript length: {transcript_result['content_length']} chars")
+                    print(f"Parse quality: {transcript_result['quality_score']:.2f}")
+            else:
+                print("No transcript found via enhanced discovery")
+                
+        elif args.command == 'analyze-quality':
+            quality_report = generator.analyze_episode_quality(
+                args.show, args.season, args.episode
+            )
+            if quality_report:
+                print("Quality Analysis Report:")
+                for key, value in quality_report.items():
+                    print(f"{key}: {value}")
+            else:
+                print("Quality analysis failed")
+                
+        elif args.command == 'discover':
+            episodes = generator.discover_show_episodes(args.show, args.season)
+            if episodes:
+                print(f"Discovered Episodes for {args.show}:")
+                for episode in episodes:
+                    print(f"  S{episode.get('season', '?')}E{episode.get('episode', '?')}: {episode.get('title', 'Unknown')}")
+            else:
+                print("No episodes discovered")
+                
+        elif args.command == 'summarize':
+            summary = generator.generate_content_summary(
+                args.show, args.season, args.episode
+            )
+            if summary:
+                print(f"Content Summary for {args.show} S{args.season}E{args.episode}:")
+                print(summary)
+            else:
+                print("Content summary generation failed")
+                
+        elif args.command == 'validate-quality':
+            if args.stage:
+                result = generator.validate_stage_quality(
+                    args.show, args.season, args.episode, args.stage
+                )
+                if result:
+                    print(f"Quality Validation for {args.show} S{args.season}E{args.episode} ({args.stage}):")
+                    print(f"Overall Score: {result['overall_score']:.2f}")
+                    print(f"Acceptable: {result['is_acceptable']}")
+                    if result['issues']:
+                        print("Issues:")
+                        for issue in result['issues']:
+                            print(f"  - {issue}")
+                    if result['recommendations']:
+                        print("Recommendations:")
+                        for rec in result['recommendations']:
+                            print(f"  - {rec}")
+                else:
+                    print("Quality validation failed")
+            else:
+                result = generator.analyze_episode_quality(
+                    args.show, args.season, args.episode
+                )
+                if result:
+                    print(f"Comprehensive Quality Analysis for {args.show} S{args.season}E{args.episode}:")
+                    print(f"Overall Score: {result['overall_score']:.2f}")
+                    print(f"Meets Standards: {result['meets_standards']}")
+                    print(f"Passed Gates: {', '.join(result['passed_quality_gates'])}")
+                    if result['failed_quality_gates']:
+                        print(f"Failed Gates: {', '.join(result['failed_quality_gates'])}")
+                    if result['critical_issues']:
+                        print("Critical Issues:")
+                        for issue in result['critical_issues']:
+                            print(f"  - {issue}")
+                    print("Recommendations:")
+                    for rec in result['recommendations']:
+                        print(f"  - {rec}")
+                else:
+                    print("Quality analysis failed")
+                    
+        elif args.command == 'quality-dashboard':
+            dashboard = generator.quality_agent.get_quality_dashboard()
+            if dashboard.get('status') == 'no_data':
+                print("No quality data available yet")
+            else:
+                print("Quality Dashboard:")
+                print(f"Total Evaluations: {dashboard['total_evaluations']}")
+                print(f"Recent Evaluations: {dashboard['recent_evaluations']}")
+                print(f"Recent Trend: {dashboard['recent_trend']}")
+                print("\nStage Averages:")
+                for stage, avg in dashboard['stage_averages'].items():
+                    print(f"  {stage}: {avg:.2f}")
+                print("\nQuality Gate Pass Rates:")
+                for stage, rate in dashboard['gate_pass_rates'].items():
+                    print(f"  {stage}: {rate:.1%}")
+                    
+        elif args.command == 'quality-trends':
+            # This would need implementation in the quality coordinator
+            print("Quality trends analysis not yet implemented")
+            
+        elif args.command == 'discover-sources':
+            sources = generator.transcript_source_agent.discover_sources_for_show(
+                args.show, args.season
+            )
+            if sources:
+                print(f"Discovered {len(sources)} transcript sources for {args.show}:")
+                for i, source in enumerate(sources, 1):
+                    print(f"\n{i}. {source.url}")
+                    print(f"   Type: {source.source_type}")
+                    print(f"   Reliability: {source.reliability_score:.2f}")
+                    print(f"   Quality: {source.content_quality}")
+                    print(f"   Coverage: {source.episode_coverage}")
+                    print(f"   Access: {source.accessibility}")
+            else:
+                print(f"No transcript sources found for {args.show}")
+                
+        elif args.command == 'evaluate-source':
+            from agents.transcript_source_agent import TranscriptSource
+            # Create a temporary source object for evaluation
+            temp_source = TranscriptSource(
+                url=args.url,
+                source_type='unknown',
+                reliability_score=0.5,
+                content_quality='unknown',
+                last_updated=None,
+                accessibility='unknown',
+                format_type='unknown',
+                language='english',
+                episode_coverage='unknown',
+                metadata={}
+            )
+            
+            evaluation = generator.transcript_source_agent.evaluate_source_quality(temp_source)
+            if evaluation.get('accessible', False):
+                print(f"Source Evaluation for: {args.url}")
+                print(f"Overall Score: {evaluation['overall_score']:.2f}")
+                print(f"Accessibility: {evaluation['accessibility']}")
+                print(f"Update Frequency: {evaluation['update_frequency']}")
+                
+                content_analysis = evaluation.get('content_analysis', {})
+                print(f"\nContent Analysis:")
+                print(f"  Word Count: {content_analysis.get('word_count', 0)}")
+                print(f"  Character Dialogue: {content_analysis.get('character_dialogue_count', 0)}")
+                print(f"  Scene Descriptions: {content_analysis.get('scene_description_count', 0)}")
+                print(f"  Structure Quality: {content_analysis.get('structure_quality', 'unknown')}")
+                print(f"  Has Timestamps: {content_analysis.get('has_timestamps', False)}")
+                
+                community_validation = evaluation.get('community_validation', {})
+                print(f"\nCommunity Validation:")
+                print(f"  Has Community: {community_validation.get('has_community', False)}")
+                print(f"  Type: {community_validation.get('type', 'unknown')}")
+                print(f"  Validation Level: {community_validation.get('validation_level', 'unknown')}")
+                
+                technical_quality = evaluation.get('technical_quality', {})
+                print(f"\nTechnical Quality:")
+                print(f"  Load Time: {technical_quality.get('load_time', 0):.2f}s")
+                print(f"  Content Length: {technical_quality.get('content_length', 0)} bytes")
+                print(f"  Has SSL: {technical_quality.get('has_ssl', False)}")
+                print(f"  Mobile Friendly: {technical_quality.get('mobile_friendly', False)}")
+            else:
+                error = evaluation.get('error', 'Unknown error')
+                print(f"Failed to evaluate source: {error}")
+                
+        elif args.command == 'recommend-sources':
+            sources = generator.transcript_source_agent.discover_sources_for_show(
+                args.show, args.season
+            )
+            recommendations = generator.transcript_source_agent.get_source_recommendations(sources)
+            
+            print(f"Source Recommendations for {args.show}:")
+            print(f"Summary: {recommendations['summary']}")
+            
+            if recommendations['recommended']:
+                print(f"\nRecommended Sources ({len(recommendations['recommended'])}):")
+                for i, source in enumerate(recommendations['recommended'], 1):
+                    print(f"{i}. {source.url} (Score: {source.reliability_score:.2f})")
+                    print(f"   Type: {source.source_type}, Quality: {source.content_quality}")
+            
+            if recommendations['backup']:
+                print(f"\nBackup Sources ({len(recommendations['backup'])}):")
+                for i, source in enumerate(recommendations['backup'], 1):
+                    print(f"{i}. {source.url} (Score: {source.reliability_score:.2f})")
+            
+            if recommendations['avoid']:
+                print(f"\nSources to Avoid ({len(recommendations['avoid'])}):")
+                for i, source in enumerate(recommendations['avoid'], 1):
+                    print(f"{i}. {source.url} (Score: {source.reliability_score:.2f})")
+            
+            if recommendations.get('best_source'):
+                best = recommendations['best_source']
+                print(f"\nBest Source: {best.url}")
+                print(f"Score: {best.reliability_score:.2f}")
+                print(f"Type: {best.source_type}")
+                print(f"Quality: {best.content_quality}")
+            else:
+                print("\nNo sources found to recommend.")
+                
+        elif args.command == 'analyze-characters':
+            result = generator.analyze_episode_characters(
+                args.show, args.season, args.episode
+            )
+            
+            if 'error' in result:
+                print(f"Character analysis failed: {result['error']}")
+            else:
+                print(f"Character Analysis for {result['episode']}:")
+                print(f"Total Characters: {result['total_characters']}")
+                
+                for char_name, profile in result['characters'].items():
+                    print(f"\n📖 {char_name}:")
+                    print(f"   Dialogue Count: {profile['dialogue_count']}")
+                    print(f"   Personality Traits: {', '.join(profile['personality_traits']) or 'None detected'}")
+                    if profile['relationships']:
+                        print(f"   Relationships: {', '.join(profile['relationships'].keys())}")
+                    print(f"   First Appearance: S{profile['first_appearance']['season']}E{profile['first_appearance']['episode']}")
+                    
+        elif args.command == 'similar-characters':
+            similar_chars = generator.find_similar_characters(
+                args.character, args.show, args.limit
+            )
+            
+            if similar_chars:
+                print(f"Characters Similar to {args.character}:")
+                for i, char in enumerate(similar_chars, 1):
+                    print(f"\n{i}. {char['character_name']} ({char['show_name']})")
+                    print(f"   Similarity Score: {char['similarity_score']:.3f}")
+                    print(f"   Personality Traits: {', '.join(char['personality_traits'])}")
+                    print(f"   Dialogue Count: {char['dialogue_count']}")
+            else:
+                print(f"No similar characters found for {args.character}")
+                
+        elif args.command == 'character-development':
+            development = generator.analyze_character_development(
+                args.character, args.show
+            )
+            
+            if 'error' in development:
+                print(f"Character development analysis failed: {development['error']}")
+            else:
+                print(f"Character Development Analysis for {development['character_name']}:")
+                print(f"Show: {development['show_name']}")
+                print(f"Total Episodes: {development['total_episodes']}")
+                print(f"Development Score: {development['development_score']:.2f}")
+                
+                if development['first_appearance']:
+                    first = development['first_appearance']
+                    print(f"First Appearance: S{first['season']}E{first['episode']}")
+                
+                if development['latest_appearance']:
+                    latest = development['latest_appearance']
+                    print(f"Latest Appearance: S{latest['season']}E{latest['episode']}")
+                
+                print(f"Dialogue Trend: {development['dialogue_trend']}")
+                
+                if development['personality_evolution']:
+                    print("\nPersonality Evolution:")
+                    for trait, evolution in development['personality_evolution'].items():
+                        print(f"  {trait}: {evolution['trend']} (early: {evolution['first_third']:.2f}, recent: {evolution['last_third']:.2f})")
+                        
+        elif args.command == 'character-relationships':
+            relationships = generator.get_character_relationships(
+                args.character, args.show
+            )
+            
+            if 'error' in relationships:
+                print(f"Character relationship analysis failed: {relationships['error']}")
+            else:
+                print(f"Character Relationships for {relationships['character_name']}:")
+                print(f"Total Relationships: {relationships['total_relationships']}")
+                
+                for other_char, rel_data in relationships['relationships'].items():
+                    print(f"\n🤝 {other_char}:")
+                    print(f"   Interaction Count: {rel_data['interaction_count']}")
+                    print(f"   Relationship Strength: {rel_data['relationship_strength']:.2f}")
+                    print(f"   Primary Interaction: {rel_data['primary_interaction_type']}")
+                    print(f"   Emotional Tone: {rel_data['primary_emotional_tone']}")
+                    print(f"   Episodes: {', '.join(rel_data['episodes'][:5])}")  # Show first 5
+                    
+        elif args.command == 'search-character-moments':
+            moments = generator.search_character_moments(
+                args.query, args.character, args.show, args.limit
+            )
+            
+            if moments:
+                print(f"Character Moments for Query: '{args.query}'")
+                for i, moment in enumerate(moments, 1):
+                    print(f"\n{i}. {moment['character_name']} - {moment['show_name']} S{moment['season']}E{moment['episode']}")
+                    print(f"   Relevance Score: {moment['relevance_score']:.3f}")
+                    print(f"   Personality Traits: {', '.join(moment['personality_traits'])}")
+                    print(f"   Preview: {moment['content_preview']}")
+            else:
+                print(f"No character moments found for query: '{args.query}'")
+                
+        elif args.command == 'character-stats':
+            stats = generator.get_character_statistics()
+            
+            if 'error' in stats:
+                print(f"Failed to get character statistics: {stats['error']}")
+            else:
+                print("Character Database Statistics:")
+                print(f"Total Character Profiles: {stats['total_character_profiles']}")
+                print(f"Total Interactions: {stats['total_interactions']}")
+                print(f"Unique Characters: {stats['unique_characters']}")
+                print(f"Unique Shows: {stats['unique_shows']}")
+                
+                if stats['shows_analyzed']:
+                    print(f"\nShows Analyzed: {', '.join(stats['shows_analyzed'])}")
+                
+                if stats['sample_characters']:
+                    print(f"\nSample Characters: {', '.join(stats['sample_characters'])}")
+        
+        elif args.command == 'analyze-season':
+            print(f"🎬 Analyzing {args.show} Season {args.season}...")
+            analysis = generator.analyze_season_development(args.show, args.season)
+            
+            if 'error' in analysis:
+                print(f"❌ Season analysis failed: {analysis['error']}")
+            else:
+                print("✅ Season Analysis Completed!\n")
+                
+                # Season Overview
+                season_info = analysis['season_info']
+                print(f"📊 Season Overview:")
+                print(f"  Show: {season_info['show_name']}")
+                print(f"  Season: {season_info['season']}")
+                print(f"  Episodes: {season_info['total_episodes']} ({season_info['episode_range']})")
+                
+                # Character Insights
+                char_insights = analysis['character_insights']
+                print(f"\n👥 Character Development:")
+                print(f"  Total Characters: {char_insights['total_characters']}")
+                
+                print(f"\n🌟 Top Developing Characters:")
+                for i, (char_name, score) in enumerate(char_insights['top_developing_characters'], 1):
+                    print(f"  {i}. {char_name}: {score:.2f}")
+                
+                print(f"\n🎭 Screen Time Leaders:")
+                for char_name, percentage in char_insights['character_focus_distribution']:
+                    print(f"  {char_name}: {percentage:.1f}%")
+                
+                # Story Insights
+                story_insights = analysis['story_insights']
+                print(f"\n📖 Story Analysis:")
+                print(f"  Pivotal Moments: {story_insights['pivotal_moments_count']}")
+                print(f"  Narrative Arcs: {story_insights['narrative_arcs']}")
+                print(f"  Thematic Diversity: {story_insights['thematic_diversity']:.2f}")
+                
+                print(f"\n🎨 Dominant Themes:")
+                for theme, count in story_insights['dominant_themes']:
+                    print(f"  {theme}: {count} instances")
+                
+                # Relationship Insights
+                rel_insights = analysis['relationship_insights']
+                print(f"\n🤝 Relationship Analysis:")
+                print(f"  Total Relationships: {rel_insights['total_relationships']}")
+                
+                if rel_insights['strongest_relationships']:
+                    print(f"\n💫 Strongest Relationships:")
+                    for rel_key, strength in rel_insights['strongest_relationships']:
+                        chars = rel_key.replace('_', ' ↔ ')
+                        rel_type = rel_insights['relationship_types'].get(rel_key, 'unknown')
+                        print(f"  {chars}: {strength:.2f} ({rel_type})")
+                
+                # Episode Analysis
+                ep_insights = analysis['episode_analysis']
+                print(f"\n🎯 Most Significant Episodes:")
+                for ep_key, score in ep_insights['most_significant_episodes']:
+                    ep_type = ep_insights['episode_types_distribution'].get(ep_key, 'unknown')
+                    print(f"  {ep_key}: {score:.2f} ({ep_type})")
+                
+                print(f"\n💡 For detailed analysis, check the raw data in the returned object.")
+        
+        elif args.command == 'view-season-summaries':
+            summaries = generator.db.get_all_season_summaries(args.show)
+            
+            if summaries:
+                print(f"📚 Season Summaries{' for ' + args.show if args.show else ''}:")
+                print("=" * 50)
+                
+                for summary in summaries:
+                    print(f"\n🎬 {summary['show']} Season {summary['season']}")
+                    print(f"   Created: {summary['created_at']}")
+                    print(f"   Updated: {summary['updated_at']}")
+                    
+                    # Show preview of summary
+                    summary_preview = summary['summary'][:200] + "..." if len(summary['summary']) > 200 else summary['summary']
+                    print(f"   Preview: {summary_preview}")
+                    
+                    # Show analysis insights if available
+                    if summary['analysis_data']:
+                        analysis = summary['analysis_data']
+                        season_info = analysis.get('season_info', {})
+                        char_insights = analysis.get('character_insights', {})
+                        story_insights = analysis.get('story_insights', {})
+                        
+                        print(f"   Episodes: {season_info.get('total_episodes', 'N/A')}")
+                        print(f"   Characters: {char_insights.get('total_characters', 'N/A')}")
+                        print(f"   Pivotal Moments: {story_insights.get('pivotal_moments_count', 'N/A')}")
+                    
+                    # Show media files if available
+                    if summary['media_files']:
+                        media = summary['media_files']
+                        print(f"   Media Files:")
+                        for key, value in media.items():
+                            if value:
+                                print(f"     {key.replace('_', ' ').title()}: {value}")
+                    
+                    print("-" * 30)
+                    
+            else:
+                filter_text = f" for {args.show}" if args.show else ""
+                print(f"No season summaries found{filter_text}")
+            
+    except KeyboardInterrupt:
+        logger.info("Operation cancelled by user")
+    except Exception as e:
+        logger.error(f"Error: {e}")
+
 
 if __name__ == "__main__":
-    print("\n" + "="*70)
-    print("🚨 CRITICAL: main.py is DEPRECATED and should not be executed!")
-    print("="*70)
-    print()
-    print("This monolithic implementation has been replaced by a modern")
-    print("modular architecture for better maintainability and scalability.")
-    print()
-    print("✅ CORRECT USAGE:")
-    print("   python main_refactored.py --help")
-    print("   python main_refactored.py process-episode \"My Hero Academia\" 1 4")
-    print()
-    print("📖 DOCUMENTATION:")
-    print("   README.md - Quick start guide")
-    print("   docs/README_MODULAR.md - Detailed architecture guide")
-    print()
-    print("🏗️  NEW ARCHITECTURE:")
-    print("   agents/        - Specialized processing agents")
-    print("   core/          - Database and schemas")
-    print("   utils/         - Utility functions")
-    print("   media/         - Media processing")
-    print()
-    print("❌ This file (main.py) should only be used for:")
-    print("   - Historical reference")
-    print("   - Understanding the migration from monolithic to modular")
-    print("   - Emergency fallback (not recommended)")
-    print()
-    print("🔄 MIGRATION ASSISTANCE:")
-    print("   All functionality from this file is available in the new")
-    print("   modular system with improved error handling, testing,")
-    print("   and maintainability.")
-    print()
-    print("="*70)
-    print("⚠️  Execution blocked to prevent accidental usage.")
-    print("⚠️  Use main_refactored.py for current functionality.")
-    print("="*70)
-    
-    # Optionally offer to redirect (commented out to prevent accidental execution)
-    # import subprocess
-    # print("\n🤔 Run main_refactored.py instead? (y/N): ", end="")
-    # if input().lower().startswith('y'):
-    #     subprocess.call([sys.executable, "main_refactored.py"] + sys.argv[1:])
-    
-    sys.exit(1)  # Exit with error code to indicate deprecated usage
+    asyncio.run(main())

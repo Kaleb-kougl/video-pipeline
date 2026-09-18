@@ -4,6 +4,8 @@ CLI integration tests for video length configuration.
 """
 
 import subprocess
+import sys
+
 import pytest
 
 class TestCLIVideoLength:
@@ -21,7 +23,7 @@ class TestCLIVideoLength:
         with appropriate description and range information.
         """
         result = subprocess.run([
-            'python3', 'main_refactored.py', 'create-season-summary', '--help'
+            sys.executable, 'main.py', 'create-season-summary', '--help'
         ], capture_output=True, text=True)
         
         assert result.returncode == 0
@@ -36,7 +38,7 @@ class TestCLIVideoLength:
         """
         # Test too short
         result = subprocess.run([
-            'python3', 'main_refactored.py', 'create-season-summary',
+            sys.executable, 'main.py', 'create-season-summary',
             'Test Show', '1', '--duration', '3'
         ], capture_output=True, text=True)
         

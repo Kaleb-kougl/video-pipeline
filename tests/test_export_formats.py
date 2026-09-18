@@ -143,7 +143,7 @@ class TestExportFormats:
         return an honest failure marker so nothing resembling a successful
         export is written to the database.
         """
-        from main_refactored import AnimeVideoGenerator
+        from main import AnimeVideoGenerator
 
         generator = AnimeVideoGenerator()
 

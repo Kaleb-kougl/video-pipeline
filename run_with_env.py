@@ -22,7 +22,7 @@ print(f"✅ Loaded API key: {api_key[:20]}...")
 if __name__ == "__main__":
     # Add the arguments and run main
     sys.argv = [
-        'main_refactored.py',
+        'main.py',
         'create-season-summary',
         'My Hero Academia',
         '1',
@@ -32,5 +32,5 @@ if __name__ == "__main__":
     ]
     
     # Import and run main
-    import main_refactored
-    main_refactored.main()
+    import main
+    main.main()

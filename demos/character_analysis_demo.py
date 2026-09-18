@@ -27,7 +27,7 @@ Functions:
 Dependencies:
     - ChromaDB: Vector database for character embeddings
     - sentence-transformers: Text embedding model
-    - main_refactored: Core application functionality
+    - main: Core application functionality
 
 Note:
     Requires ChromaDB and sentence-transformers packages:
@@ -42,7 +42,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from main_refactored import AnimeVideoGenerator
+from main import AnimeVideoGenerator
 import logging
 
 # Set up logging
@@ -321,9 +321,9 @@ if __name__ == "__main__":
         print("🎉 Demo completed successfully!")
         print("\nTo get started with character analysis:")
         print("1. Install dependencies: pip install chromadb sentence-transformers")
-        print("2. Process some episodes: python main_refactored.py process-episode 'My Hero Academia' 1 1")
-        print("3. Analyze characters: python main_refactored.py analyze-characters 'My Hero Academia' 1 1")
-        print("4. Search moments: python main_refactored.py search-character-moments 'heroic determination'")
+        print("2. Process some episodes: python main.py process-episode 'My Hero Academia' 1 1")
+        print("3. Analyze characters: python main.py analyze-characters 'My Hero Academia' 1 1")
+        print("4. Search moments: python main.py search-character-moments 'heroic determination'")
         
     except KeyboardInterrupt:
         print("\n👋 Demo interrupted by user")
