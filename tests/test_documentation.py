@@ -6,41 +6,39 @@ from pathlib import Path
 
 class TestDocumentation:
     """Test documentation requirements."""
-    
-    def test_readme_contains_parallel_image_section(self):
-        """Test that README contains parallel image generation documentation."""
+
+    def test_readme_exists_and_describes_project(self):
+        """Test that README exists and states what the project is."""
         readme_path = Path(__file__).parent.parent / "README.md"
         assert readme_path.exists(), "README.md must exist"
-        
+
         content = readme_path.read_text()
-        
-        # Check for parallel image generation section
-        assert "Parallel Image Generation" in content
-        assert "60-70%" in content
-        assert "AnyIO" in content
-        assert "concurrent processing" in content
-        
+
+        assert "# Anime Video Generator" in content
+        assert "Repository Overview" in content
+
     def test_readme_contains_usage_examples(self):
-        """Test that README contains usage examples."""
+        """Test that README contains runnable usage examples."""
         readme_path = Path(__file__).parent.parent / "README.md"
         content = readme_path.read_text()
-        
+
         # Check for usage examples
-        assert "ParallelImageGenerator" in content
-        assert "generate_images_parallel" in content
-        
-    def test_readme_performance_metrics_documented(self):
-        """Test that performance metrics are documented."""
+        assert "Quick Start" in content
+        assert "```bash" in content
+        assert "```python" in content
+
+    def test_readme_documents_content_caching(self):
+        """Test that the content caching system is documented."""
         readme_path = Path(__file__).parent.parent / "README.md"
         content = readme_path.read_text()
-        
-        assert "Performance Improvements" in content
-        assert "image generation time" in content
-        
-    def test_readme_technology_stack_updated(self):
-        """Test that technology stack mentions parallel processing."""
+
+        assert "Intelligent Content Caching System" in content
+        assert "create_content_cache" in content
+
+    def test_readme_documents_cli_parameters(self):
+        """Test that the CLI parameter reference is documented."""
         readme_path = Path(__file__).parent.parent / "README.md"
         content = readme_path.read_text()
-        
-        assert "Performance & Concurrency" in content
-        assert "structured concurrency" in content
+
+        assert "CLI Parameter Reference" in content
+        assert "--format" in content

@@ -140,18 +140,14 @@ cache = create_content_cache(
     enable_persistence=True
 )
 
-# Automatic integration - cache checking happens transparently
-cache = ContentCache(enable_caching=True)
-results = await generator.generate_images_parallel(prompts, show, season, episode)
+# Automatic integration - cache checking happens transparently for any
+# generator implementing generate_image(prompt)
+result = cache.get_or_generate_image(prompt, image_generator, episode_context="S1E1")
 
 # Monitor cache performance
 stats = cache.get_cache_info()
 print(f"Cache hit rate: {stats['stats']['hit_rate']:.1%}")
 ```
-
-## ⚡ Parallel Image Generation (Implemented, Not Wired In)
-
-[`agents/parallel_image_generator.py`](agents/parallel_image_generator.py) implements a concurrent, AnyIO-based image generation component, but **no pipeline currently calls it** — both the episode and season pipelines use the sequential `create_images()` path instead, and no performance measurements exist for it.
 
 ### 🎬 Export Formats Feature (Scaffolded)
 
@@ -1232,33 +1228,23 @@ python tests/test_all_agents.py
 # Individual agent
 python tests/test_[agent_name].py
 
-# Parallel image generation tests
-pytest tests/test_parallel_image_generation.py -v
-
 # Test with coverage
-pytest tests/test_parallel_image_generation.py --cov=agents.parallel_image_generator --cov-report=html
-
-# Performance tests
-pytest tests/test_parallel_image_generation.py::TestPerformance -v -s
-
-# Integration tests  
-pytest tests/test_parallel_image_generation.py::TestSystemIntegration -v
+pytest tests/ --cov=agents --cov-report=html
 ```
 
-### Development Workflow - Parallel Image Generation
+### Development Workflow
 
 1. **Follow TDD**: Always write tests first (Red-Green-Refactor cycle)
 2. **PEP 8 Compliance**: All code must follow PEP 8 standards
 3. **Documentation**: Update docstrings using Google-style conventions
-4. **Performance Testing**: Verify improvements meet 60-70% target
-5. **Integration Testing**: Ensure compatibility with existing system
+4. **Integration Testing**: Ensure compatibility with existing system
 
 ```bash
 # Development validation commands
-flake8 agents/parallel_image_generator.py --max-line-length=88
-black --check agents/parallel_image_generator.py
-isort --check-only agents/parallel_image_generator.py
-mypy agents/parallel_image_generator.py
+flake8 agents/ --max-line-length=88
+black --check agents/
+isort --check-only agents/
+mypy agents/
 ```
 
 ## ✅ Implementation Success

@@ -193,12 +193,15 @@ class CacheStats:
 
 ## Integration with Existing Systems
 
-### 1. ParallelImageGenerator Integration
+### 1. Image Generator Integration
 
-Automatic cache integration with image generation:
+`get_or_generate_image()` is generator-agnostic: pass any object exposing
+`generate_image(prompt) -> dict`. A `TypeError` is raised if the object does not
+implement it. No concrete generator in this repository implements the protocol
+yet, so this integration is currently a contract only.
 
 ```python
-# In ParallelImageGenerator.__init__()
+# In your generator's __init__()
 if enable_caching:
     self.content_cache = create_content_cache(
         max_image_entries=200,
@@ -206,7 +209,7 @@ if enable_caching:
         enable_persistence=True
     )
 
-# In generate_single_image()
+# When generating
 # 1. Check cache first
 cached_result = self.content_cache.get_or_generate_image(
     prompt, self, episode_context=episode_context
@@ -399,9 +402,6 @@ python -m pytest tests/unit/test_content_cache.py::TestCacheIntegration::test_ca
 ```bash
 # Test cache integration with image generation
 python -m pytest tests/unit/test_content_cache.py::TestCacheIntegration -v
-
-# Test with parallel image generator
-python -m pytest tests/test_parallel_image_generation.py -k "cache" -v
 ```
 
 ## Troubleshooting

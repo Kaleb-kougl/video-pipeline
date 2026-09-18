@@ -209,7 +209,7 @@ print(f'Memory after: {psutil.Process().memory_info().rss / 1024**2:.1f}MB')
 
 ### Integration Points
 1. **Character Analysis**: Leverage existing `agents/character_analysis_agent.py` with ChromaDB
-2. **Image Generation**: Hook into `agents/parallel_image_generator.py` for consistent generation
+2. **Image Generation**: Hook into `media/media_utils.py` `create_images()` for consistent generation
 3. **Video Assembly**: Enhance `media/media_utils.py` with quality-aware processing
 4. **Export Pipeline**: Upgrade `media/format_exporters/` with intelligent adaptation
 

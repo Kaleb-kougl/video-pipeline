@@ -70,7 +70,8 @@ print(f"Hit rate: {stats['stats']['hit_rate']:.2%}")
 
 The caching system integrates seamlessly with existing components:
 
-- **ParallelImageGenerator**: Automatic cache checking before image generation
+- **Image generation**: Automatic cache checking before image generation, via any
+  generator implementing ``generate_image(prompt)``
 - **Character Enhancement**: Caches character analysis data for reuse
 - **Format Adapters**: Caches platform-specific adaptations
 - **Quality Management**: Statistics integration for performance monitoring
@@ -413,14 +414,22 @@ class ContentCache:
                              episode_context: Optional[str] = None) -> Dict[str, Any]:
         """
         Get cached image or generate new one if not found.
-        
+
         Args:
             prompt: Image generation prompt
-            image_generator: Image generator instance
+            image_generator: Any object implementing the image-generator protocol,
+                i.e. a callable attribute ``generate_image(prompt) -> dict``
+                returning the image payload to cache. No concrete generator in
+                this repository implements that protocol yet; this helper is
+                generator-agnostic by design and is exercised with a stub.
             episode_context: Optional episode context
-            
+
         Returns:
             Generated or cached image data
+
+        Raises:
+            TypeError: If ``image_generator`` does not implement
+                ``generate_image(prompt)``.
         """
         # Create image content structure for hashing
         image_content = {
@@ -442,8 +451,15 @@ class ContentCache:
             self.cache_content(content_hash, similar_match['content'], ContentType.IMAGE)
             return similar_match['content']
         
-        # Generate new image
-        generated_image = image_generator.generate_image(prompt)
+        # Generate new image. The generator is duck-typed: fail with an explicit
+        # contract error rather than a bare AttributeError from deep in the call.
+        generate = getattr(image_generator, 'generate_image', None)
+        if not callable(generate):
+            raise TypeError(
+                f"image_generator {type(image_generator).__name__!r} does not "
+                "implement the required 'generate_image(prompt)' method"
+            )
+        generated_image = generate(prompt)
         
         # Cache the generated image
         self.cache_content(content_hash, generated_image, ContentType.IMAGE)
