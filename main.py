@@ -89,13 +89,33 @@ class AnimeVideoGenerator:
         self.discovery_agent = EpisodeDiscoveryAgent()
         self.config_manager = EpisodeConfigManager()
 
-        # Initialize character analysis agent (optional)
+        # Initialize character analysis agent (optional).
+        #
+        # Catching only ImportError was too narrow: 541e86a made the
+        # package-missing path degrade, but every other way this can fail still
+        # killed the whole constructor. CharacterAnalysisAgent downloads a
+        # sentence-transformers model on first use, so on a machine with no warm
+        # HuggingFace cache and no network the application could not start at
+        # all -- and the same applied to a corrupt or unwritable ChromaDB
+        # directory. A feature documented as optional has to be optional for
+        # every reason it can be unavailable, not just one.
+        #
+        # The broad catch is deliberate here and not the swallowing this repo has
+        # been removing elsewhere: this is a capability probe at the composition
+        # root, the reason is logged, and the sibling VectorSearchManager block
+        # below has always done exactly this.
         try:
             self.character_agent = CharacterAnalysisAgent()
             logger.info("Character analysis enabled with ChromaDB backend")
         except ImportError:
             self.character_agent = None
-            logger.info("Character analysis disabled (missing ChromaDB dependencies)")
+            logger.info(
+                "Character analysis disabled (missing ChromaDB dependencies). "
+                "Install requirements-vector.txt to enable it."
+            )
+        except Exception as exc:
+            self.character_agent = None
+            logger.info(f"Character analysis disabled: {exc}")
 
         # Hand the orchestrator the collaborators this process already owns.
         # Built with no arguments it would construct a *second* DatabaseManager

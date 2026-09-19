@@ -7,16 +7,51 @@ discard it, and delegate to ``_generate_season_summary``, which hard-codes a
 summary at all.
 """
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
-from main import AnimeVideoGenerator
+from config.settings import get_settings
+
+
+class FakeVectorSearchManager:
+    """Stand-in for the optional vector search backend."""
+
+
+class FakeCharacterAgent:
+    """Stand-in for the ChromaDB/sentence-transformers character analysis agent."""
 
 
 @pytest.fixture
-def generator() -> AnimeVideoGenerator:
-    return AnimeVideoGenerator()
+def generator(tmp_path, fake_chat_model):
+    """
+    A real ``AnimeVideoGenerator`` confined to ``tmp_path``, with no downloads.
+
+    Constructing it bare builds the optional ``CharacterAnalysisAgent``, which
+    loads the ``all-MiniLM-L6-v2`` sentence-transformers model. That turned
+    every test in this module into a collection error on any machine without a
+    warm ``~/.cache/huggingface`` (``OSError: We couldn't connect to
+    'https://huggingface.co'``). Nothing here touches embeddings, so the three
+    boundaries that want a key, a vector store or the network are replaced -
+    the same seams ``tests/unit/test_main_composition.py`` uses - leaving the
+    real constructor, real settings and real prompt builder under test.
+    """
+    import main
+
+    settings = get_settings().model_copy(
+        update={
+            "database_path": str(tmp_path / "video_generator.db"),
+            "output_directory": str(tmp_path / "output"),
+        }
+    )
+
+    with (
+        patch("main.get_settings", return_value=settings),
+        patch("langchain.chat_models.init_chat_model", return_value=fake_chat_model),
+        patch("main.CharacterAnalysisAgent", return_value=FakeCharacterAgent()),
+        patch("main.VectorSearchManager", return_value=FakeVectorSearchManager()),
+    ):
+        return main.AnimeVideoGenerator()
 
 
 SEASON_ANALYSIS = {
