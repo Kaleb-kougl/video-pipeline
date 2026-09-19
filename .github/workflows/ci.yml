@@ -54,10 +54,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The `<!-- verified: <sha> -->` claim tags ask git whether the
-          # sources behind a measured number have moved since that commit.
-          # A shallow clone cannot answer, and the check skips rather than
-          # fails - so fetch the history and make it answerable.
+          # The `<!-- verified: ... sources: ... -->` claim tags ask git
+          # whether any cited source was touched in a commit later than the
+          # doc's own last commit. A shallow clone cannot answer - every file
+          # looks as though it changed in the single fetched commit - and the
+          # check skips rather than fails, so fetch the history and make it
+          # answerable.
           fetch-depth: 0
 
       - name: Install uv
@@ -112,8 +114,10 @@ jobs:
       # runs exactly what runs locally.
       - name: Run tests
         env:
-          # Nothing should reach the network or a model hub during the suite;
-          # fail loudly instead of hanging if something tries.
+          # Belt and braces. tests/conftest.py already redirects every model
+          # cache at an empty temporary directory and sets these for the whole
+          # session, so a local run fails the same way a runner does; these are
+          # here so the intent is visible in the workflow too.
           HF_HUB_OFFLINE: "1"
           TRANSFORMERS_OFFLINE: "1"
         run: .venv/bin/python -m pytest

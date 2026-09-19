@@ -7,6 +7,7 @@ retrieve season episode data without the array boolean evaluation errors
 that were causing "No data found" issues.
 """
 
+import contextlib
 import sys
 import unittest.mock as mock
 from pathlib import Path
@@ -18,7 +19,24 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 
-def test_character_season_analysis():
+@contextlib.contextmanager
+def _isolated_agent_dependencies():
+    """Stub everything ``CharacterAnalysisAgent()`` reaches for outside the repo.
+
+    Without this the default arguments mkdir ``data/databases/character_db`` -
+    gitignored, so present only on a machine that has already run the pipeline
+    - and download ``all-MiniLM-L6-v2`` from HuggingFace. These tests are about
+    array handling in the season retrieval path; neither the vector store nor
+    the embeddings take any part in what they assert.
+    """
+    with (
+        mock.patch("chromadb.PersistentClient"),
+        mock.patch("agents.character_analysis_agent.SentenceTransformer", mock.Mock(), create=True),
+    ):
+        yield
+
+
+def test_character_season_analysis(tmp_path):
     """Test that character season analysis retrieval works correctly.
 
     This test validates that:
@@ -113,10 +131,10 @@ def test_character_season_analysis():
     total_tests += 1
 
     try:
-        with mock.patch("chromadb.PersistentClient"):
+        with _isolated_agent_dependencies():
             from agents.character_analysis_agent import CharacterAnalysisAgent
 
-            agent = CharacterAnalysisAgent()
+            agent = CharacterAnalysisAgent(persist_directory=str(tmp_path / "character_db"))
 
             # Mock the collections
             mock_characters_collection = mock.Mock()
@@ -156,10 +174,10 @@ def test_character_season_analysis():
     total_tests += 1
 
     try:
-        with mock.patch("chromadb.PersistentClient"):
+        with _isolated_agent_dependencies():
             from agents.character_analysis_agent import CharacterAnalysisAgent
 
-            agent = CharacterAnalysisAgent()
+            agent = CharacterAnalysisAgent(persist_directory=str(tmp_path / "character_db"))
 
             mock_characters_collection = mock.Mock()
             mock_interactions_collection = mock.Mock()
@@ -203,10 +221,10 @@ def test_character_season_analysis():
     total_tests += 1
 
     try:
-        with mock.patch("chromadb.PersistentClient"):
+        with _isolated_agent_dependencies():
             from agents.character_analysis_agent import CharacterAnalysisAgent
 
-            agent = CharacterAnalysisAgent()
+            agent = CharacterAnalysisAgent(persist_directory=str(tmp_path / "character_db"))
 
             mock_characters_collection = mock.Mock()
             mock_interactions_collection = mock.Mock()
@@ -255,10 +273,10 @@ def test_character_season_analysis():
     total_tests += 1
 
     try:
-        with mock.patch("chromadb.PersistentClient"):
+        with _isolated_agent_dependencies():
             from agents.character_analysis_agent import CharacterAnalysisAgent
 
-            agent = CharacterAnalysisAgent()
+            agent = CharacterAnalysisAgent(persist_directory=str(tmp_path / "character_db"))
 
             mock_characters_collection = mock.Mock()
             mock_interactions_collection = mock.Mock()
@@ -293,10 +311,10 @@ def test_character_season_analysis():
     total_tests += 1
 
     try:
-        with mock.patch("chromadb.PersistentClient"):
+        with _isolated_agent_dependencies():
             from agents.character_analysis_agent import CharacterAnalysisAgent
 
-            agent = CharacterAnalysisAgent()
+            agent = CharacterAnalysisAgent(persist_directory=str(tmp_path / "character_db"))
 
             mock_characters_collection = mock.Mock()
             mock_interactions_collection = mock.Mock()
@@ -328,10 +346,10 @@ def test_character_season_analysis():
     total_tests += 1
 
     try:
-        with mock.patch("chromadb.PersistentClient"):
+        with _isolated_agent_dependencies():
             from agents.character_analysis_agent import CharacterAnalysisAgent
 
-            agent = CharacterAnalysisAgent()
+            agent = CharacterAnalysisAgent(persist_directory=str(tmp_path / "character_db"))
 
             mock_characters_collection = mock.Mock()
             mock_interactions_collection = mock.Mock()
@@ -377,10 +395,11 @@ def test_character_season_analysis():
 
 def main():
     """Run all character season analysis tests."""
-    if test_character_season_analysis():
-        sys.exit(0)
-    else:
-        sys.exit(1)
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as scratch:
+        passed = test_character_season_analysis(Path(scratch))
+    sys.exit(0 if passed else 1)
 
 
 if __name__ == "__main__":

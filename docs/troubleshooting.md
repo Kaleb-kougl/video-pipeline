@@ -5,7 +5,7 @@ Every one was checked against the source at `7e48b43`; where the behaviour is
 surprising the file and function that produces it is named so you can confirm it
 yourself.
 
-<!-- verified: 7e48b43 sources: main.py, agents/transcript_source_agent.py, agents/character_analysis_agent.py, agents/workflow_orchestrator.py, media/media_utils.py, pyproject.toml -->
+<!-- verified: 1875ce6 sources: main.py, agents/transcript_source_agent.py, agents/character_analysis_agent.py, agents/workflow_orchestrator.py, media/media_utils.py, pyproject.toml -->
 
 For normal operation see [runbook.md](runbook.md).
 
@@ -76,12 +76,15 @@ you.
 and scenes fall back to uniform durations instead of character-aware ones.
 
 **Cause.** ChromaDB and sentence-transformers are optional extras
-(`requirements-vector.txt`, over 1 GB of wheels). Without them
-`CharacterAnalysisAgent()` raises `ImportError`, and both
-`AnimeVideoGenerator.__init__` and `WorkflowOrchestrator.__init__` degrade to
-`None` rather than failing. The enrichment step then raises a stated reason into
-its fallback, so the log says the extra is absent rather than reporting a
-generic "Character enhancement failed".
+(`requirements-vector.txt`, over 1 GB of wheels), and the agent also downloads
+an embedding model on first construction. Both `AnimeVideoGenerator.__init__`
+and `WorkflowOrchestrator.__init__` degrade to `None` rather than failing, for
+**any** reason the agent cannot be built — a missing package, a cold model cache
+with no network, or an unwritable ChromaDB directory. The log line names which:
+"Character analysis disabled (missing ChromaDB dependencies)" for the first,
+"Character analysis disabled: `<reason>`" otherwise. The enrichment step then
+raises a stated reason into its fallback, so you get the real cause rather than
+a generic "Character enhancement failed".
 
 **Action.** Install the extras if you want enrichment —
 `pip install -r requirements.txt`, or `pip install -r requirements-vector.txt`
@@ -89,11 +92,14 @@ for ChromaDB and sentence-transformers alone. Otherwise nothing is required;
 `make install-demo` and the Docker image omit them deliberately, and `make demo`
 runs without them.
 
-> **Until `541e86a` this was fatal.** The orchestrator's `None` branch
+> **This was fatal twice.** Until `541e86a` the orchestrator's `None` branch
 > reconstructed `CharacterAnalysisAgent()` uncaught, so a missing optional extra
-> made *every* CLI subcommand raise at construction. Found while writing this
-> file: the claim being documented turned out to be false, which is why the
-> pipeline now degrades as advertised.
+> made *every* CLI subcommand raise at construction — found while writing this
+> file, when the claim being documented turned out to be false. Then `b6fde06`
+> found the narrower half of the same bug: `main.py` caught only `ImportError`,
+> so a cold model cache still killed the constructor and the application could
+> not start on a fresh machine at all. An optional feature has to be optional
+> for every reason it can be unavailable, not just the one you thought of.
 
 ### `make test` says a dev tool is missing
 

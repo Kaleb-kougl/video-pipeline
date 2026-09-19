@@ -87,6 +87,7 @@ import inspect
 import json
 import re
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -958,8 +959,11 @@ class TestDocumentedSymbolsExist:
 # Check 3: claims that cannot be checked mechanically carry evidence
 # ---------------------------------------------------------------------------
 
+# The sha is optional and informational: it records the commit at which the
+# number was measured, for a human reading the doc. `sources:` is the part the
+# build acts on.
 VERIFIED_TAG = re.compile(
-    r"<!--\s*verified:\s*([0-9a-f]{7,40})\s+sources:\s*([^>]+?)\s*-->",
+    r"<!--\s*verified:\s*(?:([0-9a-f]{7,40})\s+)?sources:\s*([^>]+?)\s*-->",
 )
 
 # Files whose load-bearing numbers are not derivable from any committed
@@ -968,10 +972,10 @@ VERIFIED_TAG = re.compile(
 FILES_REQUIRING_A_CLAIM_TAG = ("docs/telemetry.md",)
 
 
-def _git(*args: str) -> subprocess.CompletedProcess[str]:
+def _git(*args: str, cwd: Path = PROJECT_ROOT) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
-        cwd=PROJECT_ROOT,
+        cwd=cwd,
         capture_output=True,
         text=True,
         check=False,
@@ -983,46 +987,137 @@ def _git_available() -> bool:
     return _git("rev-parse", "--git-dir").returncode == 0
 
 
+@lru_cache(maxsize=1)
+def _repo_is_shallow() -> bool:
+    return _git("rev-parse", "--is-shallow-repository").stdout.strip() == "true"
+
+
+def _last_commit(path: str, cwd: Path = PROJECT_ROOT) -> str | None:
+    """The full sha of the last commit touching ``path``, or ``None`` if never committed."""
+    return _git("log", "-1", "--format=%H", "--", path, cwd=cwd).stdout.strip() or None
+
+
+def _has_uncommitted_changes(path: str, cwd: Path = PROJECT_ROOT) -> bool:
+    return bool(_git("status", "--porcelain", "--", path, cwd=cwd).stdout.strip())
+
+
+def _sources_changed_after_doc(
+    doc: str, sources: Sequence[str], cwd: Path = PROJECT_ROOT
+) -> list[tuple[str, str]]:
+    """``(source, short sha)`` for every source last touched after the doc was.
+
+    ``git log <doc commit>..HEAD -- <source>`` excludes everything reachable
+    from the doc's own last commit, so a source edited *in the same commit as
+    the doc* does not appear. That is the whole point: committing the doc
+    alongside the code it describes is what makes this pass.
+    """
+    doc_commit = _last_commit(doc, cwd=cwd)
+    if doc_commit is None:
+        return []  # never committed - nothing to be stale against
+    changed: list[tuple[str, str]] = []
+    for source in sources:
+        log = _git("log", "--format=%h", f"{doc_commit}..HEAD", "--", source, cwd=cwd).stdout
+        if log.strip():
+            changed.append((source, log.split()[0]))
+    return changed
+
+
 class TestVerifiedClaims:
-    """Quantitative claims name the commit that evidenced them.
+    """A doc with a claim tag must be at least as new as the code it cites.
 
     A measured number - the telemetry stage table, a timing, a cost - cannot be
     recomputed by a unit test without running the thing that produced it. The
-    tag is the cheapest honest substitute: it records which commit the number
-    was measured at and which sources it depends on, and the build fails when
-    one of those sources moves and the number does not.
+    tag names the files that determine it, and the build fails when one of them
+    is touched in a commit later than the doc's own last commit.
+
+    **Why this is not compared against the tagged sha.** It used to be, and it
+    cried wolf three times out of four. A tag can never cite the commit that
+    lands it - the sha does not exist until after the commit is written - so
+    every doc was permanently one commit behind by construction, and every code
+    change demanded a follow-up commit whose entire content was bumping shas.
+    Friction that pointless is routed around, and a check people route around
+    is not a check. Comparing two facts git already knows removes the bump
+    entirely: update the doc in the same commit as the code and there is
+    nothing left to maintain.
+
+    The sha survives as provenance - "this table was measured at 7e48b43" is
+    worth telling a reader - but nothing is gated on it.
+
+    What this still catches, which is the case that matters: `core/database.py`
+    changes, `docs/data-model.md` does not, and the build says so.
+
+    What it cannot catch: whether the human who touched the doc actually
+    re-read the claim. File granularity means a source edit that cannot
+    possibly affect the claim still asks for a look; the answer is to narrow
+    `sources:` to the files that really determine it. And a doc with
+    uncommitted changes is taken as current, because failing someone while they
+    are in the middle of writing the fix is exactly the crying wolf this
+    replaces.
 
     Applied to a handful of numbers on purpose. Tagging prose would make every
     sentence a merge conflict, and the fix people would reach for is deleting
     the tag.
     """
 
-    def test_tags_are_well_formed_and_still_current(self):
-        if not _git_available():
-            pytest.skip("not a git checkout")
+    def test_tags_are_well_formed(self):
+        """`sources:` must be non-empty and name real files; a sha must be a commit."""
         problems: list[str] = []
         for doc in documentation_files():
-            text = doc.read_text(encoding="utf-8")
-            for sha, raw_sources in VERIFIED_TAG.findall(text):
+            for sha, raw_sources in VERIFIED_TAG.findall(doc.read_text(encoding="utf-8")):
                 sources = [s.strip() for s in raw_sources.split(",") if s.strip()]
-                if _git("cat-file", "-e", f"{sha}^{{commit}}").returncode != 0:
-                    pytest.skip(f"{sha} is not in this checkout (shallow clone?)")
+                if not sources:
+                    problems.append(
+                        f"{_rel(doc)}: a `verified:` tag lists no sources. The point of the "
+                        f"tag is to record which files determine the claim."
+                    )
                 for source in sources:
                     if not (PROJECT_ROOT / source).exists():
                         problems.append(
-                            f"{_rel(doc)}: `verified: {sha}` cites {source}, which does not exist."
+                            f"{_rel(doc)}: `sources:` cites {source}, which does not exist. "
+                            f"It was renamed or deleted - point the tag at whatever replaced "
+                            f"it, and re-read the claim while you are there."
                         )
-                        continue
-                    changed = _git("log", "--format=%h", f"{sha}..HEAD", "--", source).stdout
-                    if changed.strip():
+                if sha and _git_available():
+                    kind = _git("cat-file", "-t", sha).stdout.strip()
+                    if kind and kind != "commit":
                         problems.append(
-                            f"{_rel(doc)}: a claim tagged `verified: {sha}` rests on {source}, "
-                            f"which has changed since ({changed.split()[0]}). Re-read the claim "
-                            f"against the code and move the tag to the commit that evidences it "
-                            f"now. If {source} does not actually determine the number, drop it "
-                            f"from `sources:` - a tag should cite the narrowest set of files "
-                            f"that does, or it will cry wolf."
+                            f"{_rel(doc)}: `verified: {sha}` names a {kind}, not a commit."
                         )
+        assert not problems, "\n" + "\n".join(problems)
+
+    def test_cited_sources_have_not_moved_since_the_doc_did(self):
+        if not _git_available():
+            pytest.skip("not a git checkout")
+        if _repo_is_shallow():
+            pytest.skip("shallow clone: git cannot say when a file last changed")
+
+        problems: list[str] = []
+        for doc in documentation_files():
+            tags = VERIFIED_TAG.findall(doc.read_text(encoding="utf-8"))
+            if not tags:
+                continue
+            rel = _rel(doc)
+            if _has_uncommitted_changes(rel):
+                continue  # being edited right now; judge it once it lands
+            sources = sorted(
+                {
+                    source.strip()
+                    for _sha, raw in tags
+                    for source in raw.split(",")
+                    if source.strip() and (PROJECT_ROOT / source.strip()).exists()
+                }
+            )
+            doc_commit = _last_commit(rel)
+            for source, changed_in in _sources_changed_after_doc(rel, sources):
+                problems.append(
+                    f"{rel} last changed in {doc_commit[:7]}, but {source} - which its "
+                    f"`verified:` tag says the claim rests on - changed later, in "
+                    f"{changed_in}. Re-read the claim against the code and commit the doc "
+                    f"with the change that affects it; that is all this check wants, and "
+                    f"there is no sha to bump. If {source} does not actually determine the "
+                    f"claim, drop it from `sources:` - the tag should cite the narrowest "
+                    f"set of files that does, or it will cry wolf."
+                )
         assert not problems, "\n" + "\n".join(problems)
 
     def test_measured_numbers_are_tagged(self):
@@ -1030,9 +1125,57 @@ class TestVerifiedClaims:
             text = (PROJECT_ROOT / name).read_text(encoding="utf-8")
             assert VERIFIED_TAG.search(text), (
                 f"{name} states measured numbers that no test can recompute. They need a "
-                "`<!-- verified: <sha> sources: a.py, b.py -->` tag so the build notices "
+                "`<!-- verified: [<sha>] sources: a.py, b.py -->` tag so the build notices "
                 "when the code behind them moves."
             )
+
+
+class TestTheStalenessRuleItself:
+    """The check above is only worth having if it fails on real drift.
+
+    Asserted against a throwaway three-commit repository rather than this one,
+    because the interesting states - doc and code in one commit, code alone
+    afterwards - cannot be staged in the live history.
+    """
+
+    @staticmethod
+    def _repo(tmp_path: Path) -> Path:
+        root = tmp_path / "repo"
+        (root / "docs").mkdir(parents=True)
+        _git("init", "-q", "-b", "main", str(root), cwd=tmp_path)
+        _git("config", "user.email", "t@example.com", cwd=root)
+        _git("config", "user.name", "T", cwd=root)
+        return root
+
+    @staticmethod
+    def _commit(root: Path, message: str, files: dict[str, str]) -> None:
+        for name, body in files.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+        _git("add", "-A", cwd=root)
+        _git("commit", "-qm", message, cwd=root)
+
+    def test_doc_committed_with_the_code_is_current(self, tmp_path):
+        """The landing-commit case the old sha comparison could never express."""
+        root = self._repo(tmp_path)
+        self._commit(root, "initial", {"code.py": "v1", "docs/guide.md": "describes v1"})
+        self._commit(root, "change both", {"code.py": "v2", "docs/guide.md": "describes v2"})
+        assert _sources_changed_after_doc("docs/guide.md", ["code.py"], cwd=root) == []
+
+    def test_code_changed_without_the_doc_is_stale(self, tmp_path):
+        root = self._repo(tmp_path)
+        self._commit(root, "initial", {"code.py": "v1", "docs/guide.md": "describes v1"})
+        self._commit(root, "change the code only", {"code.py": "v2"})
+        stale = _sources_changed_after_doc("docs/guide.md", ["code.py"], cwd=root)
+        assert [source for source, _sha in stale] == ["code.py"]
+
+    def test_doc_updated_after_the_code_is_current(self, tmp_path):
+        root = self._repo(tmp_path)
+        self._commit(root, "initial", {"code.py": "v1", "docs/guide.md": "describes v1"})
+        self._commit(root, "change the code only", {"code.py": "v2"})
+        self._commit(root, "catch the doc up", {"docs/guide.md": "describes v2"})
+        assert _sources_changed_after_doc("docs/guide.md", ["code.py"], cwd=root) == []
 
 
 # ---------------------------------------------------------------------------

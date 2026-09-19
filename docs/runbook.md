@@ -6,7 +6,7 @@ that implements it, at `d98476a`. For failures see
 [operations.md](operations.md); for what the database holds see
 [data-model.md](data-model.md).
 
-<!-- verified: 7e48b43 sources: main.py, core/database.py, core/schemas.py, core/telemetry.py, scripts/demo.py, config/settings.py -->
+<!-- verified: 1875ce6 sources: main.py, core/database.py, core/schemas.py, core/telemetry.py, scripts/demo.py, config/settings.py -->
 
 ## Before you start
 

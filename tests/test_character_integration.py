@@ -4,6 +4,7 @@ Simple test to verify the character analysis integration works correctly.
 """
 
 import sys
+import unittest.mock as mock
 from pathlib import Path
 
 # Add the project root to Python path
@@ -11,7 +12,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 
-def test_character_analysis_integration():
+def test_character_analysis_integration(tmp_path):
     """Test that character analysis can be integrated when dependencies are available.
 
     Validates that the character analysis system components can be imported and
@@ -43,9 +44,17 @@ def test_character_analysis_integration():
 
         print("✅ Character analysis classes imported successfully")
 
-        # Test class instantiation (will fail gracefully without ChromaDB)
+        # Test class instantiation (will fail gracefully without ChromaDB).
+        #
+        # The persist directory is `tmp_path` and the embedding model is
+        # stubbed. The default arguments would mkdir `data/databases/
+        # character_db`, which is gitignored, and download `all-MiniLM-L6-v2`
+        # from HuggingFace - both present only on a machine that has already
+        # run the pipeline, which is why this passed locally and failed on a
+        # clean runner.
         try:
-            CharacterAnalysisAgent()
+            with mock.patch.object(char_module, "SentenceTransformer", mock.Mock()):
+                CharacterAnalysisAgent(persist_directory=str(tmp_path / "character_db"))
             print("✅ Character analysis agent initialized")
         except ImportError as e:
             print(f"⚠️  Agent initialization failed (expected): {e}")

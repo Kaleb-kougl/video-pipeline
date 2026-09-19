@@ -6,7 +6,7 @@ and `media/media_utils.py` at `689c889`.
 [telemetry.md](telemetry.md) is the design rationale; this file is the operator
 view. For procedures see [runbook.md](runbook.md).
 
-<!-- verified: b833e6a sources: core/telemetry.py, agents/workflow_orchestrator.py, media/media_utils.py -->
+<!-- verified: 1875ce6 sources: core/telemetry.py, agents/workflow_orchestrator.py, media/media_utils.py -->
 
 ## What a run costs in API calls
 
