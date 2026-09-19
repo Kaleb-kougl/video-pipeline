@@ -81,6 +81,7 @@ class TestDocumentedCommandsAreReal:
         }
         invented = {m for m in mentioned if m not in registered} - {
             "anime-video-generator",
+            "video-pipeline",
             "anime-generator",  # console script in [project.scripts]
             "pre-commit",
             "requirements-vector",

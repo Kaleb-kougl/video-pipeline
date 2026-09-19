@@ -252,5 +252,9 @@ Kept because a plan that is never marked wrong was never really tested.
   the correctness fixes found *while* writing tests were. Four separate fix
   commits (`14f3404`, `d2ac52b`, `2971e15`, `bf53dd6`) came out of work that was
   nominally about coverage.
-- **"Rename the directory to `anime-video-generator`."** Never done. The repo is
-  still `htmlParser`, which is the first thing a reviewer sees.
+- **"Rename the directory to `anime-video-generator`."** Overtaken. The local
+  working directory is still `htmlParser`, but the repo is published as
+  `Kaleb-kougl/video-pipeline`, so the name a reviewer actually sees is the
+  remote's. The plan had guessed a name and every URL in the repo was written
+  against that guess — both the owner and the repo were wrong until the remote
+  existed to check against.

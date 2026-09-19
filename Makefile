@@ -102,5 +102,5 @@ eval-live: $(BIN)/python  ## Same rubric against real Gemini (needs GOOGLE_API_K
 # ---------------------------------------------------------------------------
 
 docker-demo:  ## Build the demo image and run it, copying the MP4 to demo_output/
-	docker build -t anime-video-generator:demo .
-	docker run --rm --network none -v "$(CURDIR)/demo_output:/out" anime-video-generator:demo
+	docker build -t video-pipeline:demo .
+	docker run --rm --network none -v "$(CURDIR)/demo_output:/out" video-pipeline:demo

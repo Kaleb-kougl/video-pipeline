@@ -1,6 +1,6 @@
 # Anime Video Generator
 
-[![CI](https://github.com/kalebkougl/anime-video-generator/actions/workflows/ci.yml/badge.svg)](https://github.com/kalebkougl/anime-video-generator/actions/workflows/ci.yml)
+[![CI](https://github.com/Kaleb-kougl/video-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Kaleb-kougl/video-pipeline/actions/workflows/ci.yml)
 
 Turns a TV episode transcript into a narrated summary video. A multi-stage
 pipeline finds the transcript, summarizes it with Gemini into a typed schema,
@@ -26,8 +26,8 @@ Python **3.11 or 3.12**. 3.9/3.10 fail on the pinned numpy; 3.14 has no torch
 wheels yet.
 
 ```bash
-git clone https://github.com/kalebkougl/anime-video-generator.git
-cd anime-video-generator
+git clone https://github.com/Kaleb-kougl/video-pipeline.git
+cd video-pipeline
 
 uv venv --python 3.12 && source .venv/bin/activate
 uv pip install -r requirements.txt          # ~26s

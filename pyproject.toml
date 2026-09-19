@@ -91,9 +91,9 @@ dev = [
 anime-generator = "main:main"
 
 [project.urls]
-Homepage = "https://github.com/kalebkougl/anime-video-generator"
-Repository = "https://github.com/kalebkougl/anime-video-generator"
-Issues = "https://github.com/kalebkougl/anime-video-generator/issues"
+Homepage = "https://github.com/Kaleb-kougl/video-pipeline"
+Repository = "https://github.com/Kaleb-kougl/video-pipeline"
+Issues = "https://github.com/Kaleb-kougl/video-pipeline/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
