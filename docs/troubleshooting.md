@@ -5,7 +5,7 @@ Every one was checked against the source at `7e48b43`; where the behaviour is
 surprising the file and function that produces it is named so you can confirm it
 yourself.
 
-<!-- verified: 1875ce6 sources: main.py, agents/transcript_source_agent.py, agents/character_analysis_agent.py, agents/workflow_orchestrator.py, media/media_utils.py, pyproject.toml -->
+<!-- verified: 1875ce6 sources: main.py, agents/transcript_source_agent.py, agents/character_analysis_agent.py, agents/workflow_orchestrator.py, media/media_utils.py -->
 
 For normal operation see [runbook.md](runbook.md).
 

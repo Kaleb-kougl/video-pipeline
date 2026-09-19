@@ -1277,3 +1277,43 @@ class TestDocsDoNotInventCiSteps:
         assert "tests/test_docs_contract.py" in workflow, (
             "CI has no step running the documentation contract, so nothing here can fail a build."
         )
+
+
+class TestDocumentedPytestFlagsMatchPyproject:
+    """A doc quoting pytest's configured flags has to quote the real ones.
+
+    This replaces a ``verified:`` tag. ``docs/troubleshooting.md`` cited
+    ``pyproject.toml`` wholesale, so every unrelated edit to that file - a
+    version bump, a URL correction, a new lint rule - marked the doc stale and
+    demanded a no-op commit. That is the same crying wolf the staleness rule was
+    rewritten to avoid, reappearing at file granularity instead of sha
+    granularity.
+
+    The claim is one sentence and mechanically checkable, so it is checked
+    directly instead. Same principle as the eval scorecard and the CI steps:
+    where the evidence is committed, compare against it and drop the tag.
+    """
+
+    FLAG = re.compile(r"`(-m 'not network'|--timeout=\d+)`")
+
+    def test_quoted_flags_are_really_in_addopts(self):
+        pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        match = re.search(r"addopts\s*=\s*(\"\"\".*?\"\"\"|\'[^\']*\'|\"[^\"]*\")", pyproject, re.S)
+        assert match, "pyproject.toml has no addopts for the docs to describe."
+        configured = match.group(1)
+
+        problems: list[str] = []
+        for doc in documentation_files():
+            if _rel(doc) == "docs/documentation-plan.md":
+                continue  # a plan may describe configuration that does not exist yet
+            for number, line in enumerate(doc.read_text(encoding="utf-8").splitlines()):
+                if "addopts" not in line and "pyproject" not in line:
+                    continue
+                for flag in self.FLAG.findall(line):
+                    bare = flag.split("=")[0] if flag.startswith("--") else flag
+                    if bare not in configured:
+                        problems.append(
+                            f"{_rel(doc)}:{number + 1} says pytest is configured with "
+                            f"`{flag}`, but addopts in pyproject.toml does not carry it."
+                        )
+        assert not problems, "\n" + "\n".join(problems)
