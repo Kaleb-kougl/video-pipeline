@@ -1,16 +1,47 @@
 #!/usr/bin/env python3
 """
 Test suite for metadata validation and show separation.
-Following TDD - these tests should FAIL initially.
+
+Everything here is a logic test: schema construction, show-name canonicalization
+and the show filtering the agent puts into its ChromaDB ``where`` clauses. None
+of it needs a real vector store or a real embedding model, so none of it builds
+one. ``CharacterAnalysisAgent()`` with its default arguments would ``mkdir``
+``data/databases/character_db`` - gitignored, therefore present only on a
+machine that has already run the pipeline - and download ``all-MiniLM-L6-v2``
+from HuggingFace. Tests that did that passed locally and failed on a clean
+checkout; the ``character_agent`` fixture below pins both out.
 """
 
-from unittest.mock import patch
+import json
+from unittest.mock import Mock, patch
 
 import pytest
 
 from agents.character_analysis_agent import CharacterAnalysisAgent
 from core.metadata_schemas import CharacterMetadata, InteractionMetadata  # NEW MODULE
 from core.show_registry import ShowRegistry  # NEW MODULE - doesn't exist yet
+
+
+@pytest.fixture
+def character_agent(tmp_path):
+    """A ``CharacterAnalysisAgent`` that touches neither disk nor the network.
+
+    The persist directory is pytest's ``tmp_path``, the ChromaDB client is a
+    mock handing out one distinct collection mock per collection name, and the
+    sentence-transformers encoder is never constructed. Tests drive the agent by
+    setting ``.query``/``.get`` on those collection mocks.
+    """
+    collections: dict[str, Mock] = {}
+
+    def _get_or_create_collection(name, **_kwargs):
+        return collections.setdefault(name, Mock(name=f"{name}_collection"))
+
+    with (
+        patch("chromadb.PersistentClient") as client_class,
+        patch("agents.character_analysis_agent.SentenceTransformer"),
+    ):
+        client_class.return_value.get_or_create_collection.side_effect = _get_or_create_collection
+        return CharacterAnalysisAgent(persist_directory=str(tmp_path / "character_db"))
 
 
 class TestMetadataValidation:
@@ -133,9 +164,13 @@ class TestMetadataValidation:
         assert metadata_dict["show_name"] == "My Hero Academia"
         assert metadata_dict["show_id"] == "my_hero_academia"
 
-    def test_character_agent_requires_show_name(self):
-        """Test that character agent methods require show_name parameter."""
-        agent = CharacterAnalysisAgent()
+    def test_character_agent_requires_show_name(self, character_agent):
+        """Test that character agent methods require show_name parameter.
+
+        A signature check: it never reaches a collection, so the agent is the
+        hermetic one rather than a real ChromaDB-backed instance.
+        """
+        agent = character_agent
 
         # These should raise TypeError because show_name is now required positional argument
         with pytest.raises(TypeError):
@@ -144,9 +179,14 @@ class TestMetadataValidation:
         with pytest.raises(TypeError):
             agent.search_character_moments("heroic moment", "Deku")  # Missing show_name
 
-    def test_cross_show_isolation_enforcement(self):
-        """Test that queries properly isolate shows."""
-        agent = CharacterAnalysisAgent()
+    def test_cross_show_isolation_enforcement(self, character_agent):
+        """Test that queries properly isolate shows.
+
+        What is under test is the ``where`` clause the agent builds, which is
+        asserted against a mocked collection - a real vector store would add
+        nothing.
+        """
+        agent = character_agent
 
         # Mock the characters collection, not interactions
         with patch.object(agent.characters_collection, "query") as mock_query:
@@ -182,36 +222,135 @@ class TestMetadataValidation:
             )
 
     def test_metadata_migration_for_existing_data(self):
-        """Test migration of existing data without proper metadata."""
+        """Test migration of existing data without proper metadata.
+
+        ``migrate_interaction_metadata`` opens its own ``chromadb``
+        ``PersistentClient`` at a hardcoded path, so that is what gets patched;
+        otherwise the call creates ``data/databases/character_db`` as a side
+        effect of running the test suite.
+        """
         from scripts.migrate_metadata import migrate_interaction_metadata  # NEW SCRIPT
 
-        # Should be able to fix existing interactions missing show_name
-        migration_result = migrate_interaction_metadata()
+        collection = Mock()
+        collection.get.return_value = {
+            # An interaction with no show_name: exactly what migration is for.
+            "metadatas": [{"episode_key": "my_hero_academia_S1E1"}],
+            "documents": ["Izuku and Bakugo argue"],
+            "ids": ["interaction_1"],
+        }
+
+        with patch("chromadb.PersistentClient") as client_class:
+            client_class.return_value.get_collection.return_value = collection
+            migration_result = migrate_interaction_metadata()
 
         # Should report number of fixed records
-        assert "migrated_count" in migration_result
-        assert migration_result["migrated_count"] >= 0
-        # Migration may fail if no database exists, but should handle gracefully
-        assert "success" in migration_result
+        assert migration_result["success"] is True
+        assert migration_result["migrated_count"] == 1
+        written = collection.update.call_args.kwargs["metadatas"][0]
+        assert written["show_name"] == "My Hero Academia"
 
-    def test_duplicate_character_handling(self):
-        """Test handling of characters with same names across shows."""
-        agent = CharacterAnalysisAgent()
+    def test_duplicate_character_handling(self, character_agent):
+        """Test handling of characters with same names across shows.
 
-        # Should be able to distinguish between different "Eren" characters
-        aot_eren = agent.analyze_character_development("Eren", "Attack on Titan")
-        eren_yeager = agent.analyze_character_development("Eren Yeager", "Attack on Titan")
+        The old version built a real agent, so it needed the HuggingFace model,
+        and then asserted only ``isinstance(..., dict)`` - which the agent's own
+        ``except`` clause satisfies by returning ``{"error": ...}``. Here a
+        collection stub answers the ``where`` clause the agent sends, so the
+        assertions can be about which rows each name actually resolves to.
+        """
+        corpus = [
+            {
+                "character_name": "Eren",
+                "show_name": "Attack on Titan",
+                "season": 1,
+                "episode": 1,
+                "dialogue_count": 12,
+                "personality_traits": json.dumps(["determined"]),
+            },
+            {
+                "character_name": "Eren",
+                "show_name": "Attack on Titan",
+                "season": 1,
+                "episode": 2,
+                "dialogue_count": 20,
+                "personality_traits": json.dumps(["determined", "angry"]),
+            },
+            {
+                "character_name": "Eren Yeager",
+                "show_name": "Attack on Titan",
+                "season": 1,
+                "episode": 3,
+                "dialogue_count": 30,
+                "personality_traits": json.dumps(["determined"]),
+            },
+            # Same first name, different show: must never be returned.
+            {
+                "character_name": "Eren",
+                "show_name": "Shingeki Spinoff",
+                "season": 1,
+                "episode": 1,
+                "dialogue_count": 99,
+                "personality_traits": json.dumps(["loud"]),
+            },
+        ]
 
-        # Different characters should return different results (even if empty)
-        # The key test is that show_name is now required and prevents cross-contamination
-        assert isinstance(aot_eren, dict)
-        assert isinstance(eren_yeager, dict)
+        def _query(*, where, **_kwargs):
+            wanted = {}
+            for clause in where["$and"]:
+                ((field, condition),) = clause.items()
+                wanted[field] = condition["$eq"]
+            assert "show_name" in wanted, "the agent must always filter by show"
+            matched = [
+                row
+                for row in corpus
+                if row["character_name"] == wanted["character_name"]
+                and row["show_name"] == wanted["show_name"]
+            ]
+            return {"metadatas": [matched], "documents": [[""] * len(matched)]}
+
+        character_agent.characters_collection.query.side_effect = _query
+
+        aot_eren = character_agent.analyze_character_development("Eren", "Attack on Titan")
+        eren_yeager = character_agent.analyze_character_development(
+            "Eren Yeager", "Attack on Titan"
+        )
+
+        # Two characters whose names overlap resolve to different episode sets,
+        # and the "Eren" of the other show is excluded from both.
+        assert "error" not in aot_eren, aot_eren.get("error")
+        assert "error" not in eren_yeager, eren_yeager.get("error")
+        assert aot_eren["dialogue_trend"] == [12, 20]
+        assert eren_yeager["dialogue_trend"] == [30]
+        assert aot_eren["total_episodes"] == 2
+        assert eren_yeager["total_episodes"] == 1
 
     def test_metadata_consistency_validation(self):
-        """Test system-wide metadata consistency checking."""
+        """Test system-wide metadata consistency checking.
+
+        ``MetadataQualityAgent`` hardcodes its ChromaDB path and swallows the
+        connection failure, so unpatched this test both wrote into
+        ``data/databases/`` and asserted against whatever rows happened to be on
+        the machine. Patched, the rows are the ones this test states.
+        """
         from agents.quality_agents.metadata_quality_agent import MetadataQualityAgent  # NEW AGENT
 
-        quality_agent = MetadataQualityAgent()
+        characters = Mock()
+        interactions = Mock()
+        # One profile uses an alias rather than the canonical show name.
+        characters.get.return_value = {
+            "metadatas": [{"character_name": "Izuku", "show_name": "MHA"}]
+        }
+        # One interaction has no show_name at all.
+        interactions.get.return_value = {"metadatas": [{"episode_key": "my_hero_academia_S1E1"}]}
+        collections = {
+            "character_profiles": characters,
+            "character_interactions": interactions,
+        }
+
+        with patch("chromadb.PersistentClient") as client_class:
+            client_class.return_value.get_collection.side_effect = lambda name: collections[name]
+            quality_agent = MetadataQualityAgent()
+
         validation_report = quality_agent.validate_metadata_consistency()
 
         # Should check for missing fields, inconsistent naming, etc.
@@ -219,3 +358,6 @@ class TestMetadataValidation:
         assert "inconsistent_names" in validation_report
         assert "canonical_violations" in validation_report
         assert "total_issues" in validation_report
+        assert validation_report["missing_show_names"] == 1
+        assert validation_report["canonical_violations"] == 1
+        assert validation_report["total_issues"] == 2

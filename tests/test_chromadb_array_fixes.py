@@ -103,27 +103,44 @@ def empty_query_results():
     return {"metadatas": [], "documents": [], "embeddings": []}
 
 
-def _character_agent(characters_payload, interactions_payload):
-    """A ``CharacterAnalysisAgent`` whose collections return canned payloads."""
-    from agents.character_analysis_agent import CharacterAnalysisAgent
+@pytest.fixture
+def character_agent(tmp_path):
+    """Builds a ``CharacterAnalysisAgent`` that touches neither disk nor network.
 
-    with mock.patch("chromadb.PersistentClient"):
-        agent = CharacterAnalysisAgent()
+    The real constructor does two things none of the checks below are about: it
+    ``mkdir``s ``data/databases/character_db`` (gitignored, so it exists only on
+    a machine that has already run the pipeline) and it downloads the
+    ``all-MiniLM-L6-v2`` sentence-transformers model. Both are pinned out here -
+    the persist directory to pytest's ``tmp_path``, ChromaDB and the encoder to
+    mocks - so these tests exercise the array guards and nothing else, and pass
+    on a clean checkout with no network.
+    """
 
-    characters_collection = mock.Mock()
-    interactions_collection = mock.Mock()
-    characters_collection.query.return_value = characters_payload
-    interactions_collection.query.return_value = interactions_payload
-    agent.characters_collection = characters_collection
-    agent.interactions_collection = interactions_collection
-    return agent
+    def _make(characters_payload, interactions_payload):
+        from agents.character_analysis_agent import CharacterAnalysisAgent
+
+        with (
+            mock.patch("chromadb.PersistentClient"),
+            mock.patch("agents.character_analysis_agent.SentenceTransformer"),
+        ):
+            agent = CharacterAnalysisAgent(persist_directory=str(tmp_path / "character_db"))
+
+        characters_collection = mock.Mock()
+        interactions_collection = mock.Mock()
+        characters_collection.query.return_value = characters_payload
+        interactions_collection.query.return_value = interactions_payload
+        agent.characters_collection = characters_collection
+        agent.interactions_collection = interactions_collection
+        return agent
+
+    return _make
 
 
 def test_season_episodes_reads_numpy_embeddings(
-    character_query_results, interaction_query_results, caplog
+    character_agent, character_query_results, interaction_query_results, caplog
 ):
     """``_get_season_episodes`` must survive numpy embeddings and return data."""
-    agent = _character_agent(character_query_results, interaction_query_results)
+    agent = character_agent(character_query_results, interaction_query_results)
 
     season = agent._get_season_episodes("My Hero Academia", 1)
 
@@ -137,18 +154,18 @@ def test_season_episodes_reads_numpy_embeddings(
     assert season["episode_data"][1]["interactions"][0]["type"] == "rivalry"
 
 
-def test_season_episodes_handles_none_results():
+def test_season_episodes_handles_none_results(character_agent):
     """A collection that returns ``None`` metadata must not raise."""
     none_results = {"metadatas": None, "documents": None, "embeddings": None}
-    agent = _character_agent(none_results, none_results)
+    agent = character_agent(none_results, none_results)
 
     assert agent._get_season_episodes("My Hero Academia", 1) == {}
 
 
-def test_season_episodes_handles_empty_nested_results():
+def test_season_episodes_handles_empty_nested_results(character_agent):
     """Empty nested lists are the "no match" shape, and must not raise either."""
     empty_nested = {"metadatas": [[]], "documents": [[]], "embeddings": [[]]}
-    agent = _character_agent(empty_nested, empty_nested)
+    agent = character_agent(empty_nested, empty_nested)
 
     assert agent._get_season_episodes("My Hero Academia", 1) == {}
 

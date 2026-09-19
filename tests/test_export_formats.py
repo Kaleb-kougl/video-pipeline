@@ -14,6 +14,21 @@ from media.format_exporters import (  # NEW MODULES
 )
 
 
+class _NoInstanceState:
+    """Stands in for ``self`` where the method under test must not use it.
+
+    Any attribute access raises, so a method that starts depending on instance
+    state announces itself rather than silently reintroducing a dependency on a
+    fully constructed pipeline.
+    """
+
+    def __getattr__(self, name: str):
+        raise AssertionError(
+            f"export_video_format() read self.{name}; it is called here without a "
+            "constructed AnimeVideoGenerator, so this test needs rewriting."
+        )
+
+
 class TestExportFormats:
     """Test suite for multi-format video export functionality.
 
@@ -144,12 +159,19 @@ class TestExportFormats:
         export_video_format() is the only caller of export_video(); it must
         return an honest failure marker so nothing resembling a successful
         export is written to the database.
+
+        It is called unbound here. Constructing an ``AnimeVideoGenerator`` opens
+        the SQLite database at ``data/databases/video_generator.db`` (gitignored,
+        so absent on a clean checkout - CI got ``sqlite3.OperationalError: unable
+        to open database file``), builds a Gemini client and a ChromaDB-backed
+        character agent, none of which this method reads. ``_NoInstanceState``
+        enforces that: if ``export_video_format`` ever starts touching ``self``,
+        this test fails loudly instead of quietly needing a real generator again.
         """
         from main import AnimeVideoGenerator
 
-        generator = AnimeVideoGenerator()
-
-        result = generator.export_video_format(
+        result = AnimeVideoGenerator.export_video_format(
+            _NoInstanceState(),
             sample_video_content["show_name"],
             sample_video_content["season"],
             sample_video_content["visual_concepts"],

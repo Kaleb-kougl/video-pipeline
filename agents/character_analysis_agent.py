@@ -119,7 +119,11 @@ class CharacterAnalysisAgent:
             raise ImportError("ChromaDB not available. Install with: pip install chromadb")
 
         self.persist_directory = Path(persist_directory)
-        self.persist_directory.mkdir(exist_ok=True)
+        # parents=True: the default path is data/databases/character_db, and
+        # data/databases/ is gitignored, so on a fresh checkout the parent does
+        # not exist and a bare mkdir raises FileNotFoundError. That disabled
+        # character analysis for want of an intermediate directory.
+        self.persist_directory.mkdir(parents=True, exist_ok=True)
 
         # Initialize sentence transformer for embeddings
         if SENTENCE_TRANSFORMERS_AVAILABLE:
