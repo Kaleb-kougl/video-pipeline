@@ -1,5 +1,11 @@
 # Transcript Discovery Agent - Usage Guide
 
+> **Audited 2026-09-19 against the current source.** The orchestrator example was
+> subscripting a Pydantic model, the custom-source example used a schema the
+> parser does not read, and the "15+ URL variations" claim was wrong — slug counts
+> below are measured. Signatures re-checked against `agents/transcript_agent.py`
+> and `agents/workflow_orchestrator.py`.
+
 ## Overview
 
 The `TranscriptDiscoveryAgent` is a powerful tool that automatically searches multiple public sources to find parsable transcripts for any anime episode. It's designed to be robust, respectful to servers, and capable of handling various anime shows and episode formats.
@@ -13,24 +19,34 @@ The `TranscriptDiscoveryAgent` is a powerful tool that automatically searches mu
 
 ### 🎯 **Intelligent URL Generation**
 - **Enhanced Pattern Generation**: Handles complex show names with punctuation, subtitles, and special characters
-- **Multi-format Slug Creation**: Generates 15+ URL variations per show including:
-  - Standard formats (dashes, underscores, concatenated)
-  - Subtitle parsing ("Title: Subtitle" → multiple patterns)
-  - Acronym generation (first letters of words)
-  - Number conversion (1 ↔ one, 2 ↔ two, etc.)
-  - Common word filtering (removes "the", "a", "and", etc.)
-- **Dynamic Pattern Discovery**: Tests URLs in real-time to find working patterns
-- **Predefined Mappings**: Optimized patterns for 12+ popular anime shows
-- **Fallback Generation**: Automatic slug creation for any show name
+- **Predefined Mappings**: 13 shows have hand-written slugs in `agent.show_mappings`
+- **Fallback Generation**: For any other show, slugs are derived from the name:
+  - Standard formats (dashes, underscores, concatenated, title case)
+  - Subtitle parsing ("Title: Subtitle" → the full name plus each half)
+  - Acronym generation (first letters of words, lower and upper case)
+  - Number conversion (`86` → `8six`, `eight6`, `eighty-6`, …)
+  - Common word filtering (drops "the", "a", "on", "and", …)
 
-#### Example: "Frieren: Beyond Journey's End" generates:
-- `frieren-beyond-journeys-end`
-- `frieren-beyond-journey-end` 
-- `frieren`
-- `beyond-journeys-end`
-- `fbje` (acronym)
-- `Frieren-Beyond-Journeys-End` (title case)
-- And 10+ more variations...
+**`get_show_slugs()` short-circuits on the predefined mappings.** A show listed in
+`show_mappings` returns only its mapped slugs; the variation machinery runs only
+for shows that are *not* listed. Measured against the current source:
+
+| Show | In `show_mappings`? | Slugs returned |
+|---|---|---|
+| `My Hero Academia` | yes | 4 — `my-hero-academia`, `boku-no-hero-academia`, `mha`, `My_Hero_Academia-5626028` |
+| `Frieren: Beyond Journey's End` | yes | 2 — `Frieren_Beyond_Journeys_End-22248376`, `frieren-beyond-journeys-end` |
+| `KonoSuba: God's Blessing on This Wonderful World!` | no | 11, including `konosuba`, `kgbotww`, `KGBOTWW` |
+| `Re:Zero - Starting Life in Another World` | no | 13, including `r-sliaw`, `rezero-startinglifeinanotherworld` |
+| `86: Eighty-Six` | no | 16, including `8e`, `eight6-eighty-six`, `86-eighty-6` |
+
+Reproduce with:
+
+```python
+from agents.transcript_agent import TranscriptDiscoveryAgent
+
+agent = TranscriptDiscoveryAgent()
+print(agent.get_show_slugs("86: Eighty-Six"))
+```
 
 ### ⭐ **Content Quality Assessment**
 - Validates transcript length (minimum character count)
@@ -104,23 +120,31 @@ result = asyncio.run(
     )
 )
 
-if result["success"]:
-    episode_data = result["data"]
-    source_info = result["source_info"]
+if result.success:
+    episode_data = result.data  # dict | None
+    source_info = result.source_info  # TranscriptResult | None
 
     print(f"Successfully processed {episode_data['show']}")
-    print(f"Found via: {source_info['source']}")
-    print(f"Quality: {source_info['quality_score']:.2f}")
+    if source_info is not None:
+        print(f"Found via: {source_info.source}")
+        print(f"Quality: {source_info.quality_score:.2f}")
 
     # Generated content is available
     youtube_transcript = episode_data["youtube_transcript"]
     plot_points = episode_data["plot_points"]
+else:
+    print(f"Failed: {result.error}")
 ```
+
+`ProcessingResult` and `TranscriptResult` are Pydantic models, so their fields are
+attributes (`result.success`), not keys. Only `result.data` is a plain `dict` and
+is subscripted.
 
 ## Supported Anime Shows
 
 ### Pre-configured Shows (Higher Success Rate)
-The agent has optimized URL patterns for these popular anime:
+The 13 keys of `agent.show_mappings`. These bypass slug generation entirely and
+use their hand-written patterns:
 
 - **My Hero Academia** / Boku no Hero Academia
 - **Attack on Titan** / Shingeki no Kyojin  
@@ -134,6 +158,7 @@ The agent has optimized URL patterns for these popular anime:
 - **Tokyo Ghoul**
 - **Jujutsu Kaisen**
 - **Chainsaw Man**
+- **Frieren: Beyond Journey's End**
 
 ### Other Shows
 The agent can attempt to find transcripts for any anime show by:
@@ -148,15 +173,18 @@ The agent can attempt to find transcripts for any anime show by:
 ```python
 agent = TranscriptDiscoveryAgent()
 
-# Add a custom source
+# Add a custom source. Entries in `agent.sources` must match the shape the
+# parser reads: `base_url`, a `selectors` dict whose four keys each hold a list
+# of CSS selectors tried in order, and `quality_indicators`.
 agent.sources["custom_site"] = {
     "base_url": "https://example-transcripts.com",
-    "search_patterns": [
-        "/{show_slug}/season-{season}/episode-{episode}",
-        "/{show_slug}/s{season:02d}e{episode:02d}",
-    ],
-    "transcript_selector": ".transcript-text",
-    "title_selector": "h1.episode-title",
+    "selectors": {
+        "transcript": [".transcript-text", "main .content"],
+        "title": ["h1.episode-title", "h1", "title"],
+        "search_results": ['a[href*="/episode/"]'],
+        "metadata": [".episode-info"],
+    },
+    "quality_indicators": ["dialogue", "episode transcript"],
 }
 
 # Search specific source only
@@ -259,19 +287,23 @@ for show in complex_shows:
     print(f"{show}: {len(slugs)} URL variations generated")
 ```
 
-### Pattern Discovery in Action
+### A note on `use_discovery`
+
+`find_episode_transcript()` accepts a `use_discovery` parameter, but **it is
+never read** — the body iterates `self.sources` unconditionally. Its own
+docstring marks it "kept for compatibility". Passing it changes nothing:
 
 ```python
-# The agent can dynamically discover working patterns
-result = agent.find_episode_transcript(
-    "Frieren: Beyond Journey's End",
-    season=1,
-    episode=1,
-    use_discovery=True,  # Enables dynamic discovery
-)
+# `use_discovery` has no effect; these two calls are identical.
+result = agent.find_episode_transcript("Frieren: Beyond Journey's End", 1, 1)
 
 if result:
-    print(f"Found via dynamic discovery on {result['source']}")
+    print(f"Found on {result['source']}")
 else:
-    print("Even enhanced discovery couldn't find this episode")
+    print("No transcript found on any of the three sources")
 ```
+
+Every search fans out across all three configured sources and
+`_select_best_result()` picks the highest-scoring hit. Returning `None` means no
+source yielded a parsable transcript — which, after `d2ac52b`, is reported
+honestly rather than being papered over with another show's transcript.

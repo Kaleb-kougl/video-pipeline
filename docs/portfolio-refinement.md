@@ -112,27 +112,35 @@ Verify with `make lint`, `make typecheck`, `make test`, `make demo`,
 
 ## Part 3 — What is still outstanding
 
+*Last verified 2026-09-19, at `c262fff`. Entries marked **[in flight]** are being
+changed in the working tree right now by concurrent work and were uncommitted
+when this was written — re-run `git log --oneline` and `git status` before
+trusting them either way.*
+
 ### Correctness
 
-- **`main.py:356` falls back to a hardcoded 12 episodes** when discovery returns
-  nothing. This is the sibling of the bug `2971e15` fixed in the discovery agent;
-  that commit did not touch `main.py`, so the invented season length survives at
-  the call site.
-- **Three test modules pass under pytest but fail as scripts** —
-  `tests/test_agents_fixed.py`, `test_season_processing.py`,
-  `test_transcript_source_agent.py`. Each has an `if __name__ == "__main__"` block
-  and a `sys.path` bootstrap that earns them an `E402` exclusion in
-  `pyproject.toml`. *(Being fixed concurrently — check `git log` before trusting
-  this entry.)*
+- ~~**`main.py:356` falls back to a hardcoded 12 episodes.**~~ **[in flight]**
+  Fixed in the working tree: the call site now returns a `ProcessingResult`
+  failure whose message states explicitly that discovery returning nothing is
+  *not* evidence that the season is empty. Uncommitted as of `c262fff`.
+- ~~**Three test modules pass under pytest but fail as scripts.**~~ Closed by
+  `5b4d4df`, which promoted the `__main__` harnesses in
+  `tests/test_agents_fixed.py`, `test_season_processing.py` and
+  `test_transcript_source_agent.py` to real test functions — 3 vacuous tests
+  became 19 real ones, and four genuine bugs in `media/media_utils.py` fell out
+  of the work.
 - **Two `FOLLOW-UP` ignores in `pyproject.toml`.** The `E402` per-file ignores go
   away once the project is always installed. More seriously,
   `core.metadata_schemas` and `core.visual_coherence_manager` sit behind
   `ignore_errors = true` hiding five real type errors — `create()` overrides that
   violate the base signature, a `cv2.kmeans` overload mismatch, and an `Optional`
   str used as a dict key. These need fixes, not annotations.
-- **The eval is not wired into anything.** `docs/evals.md` says offline mode is
-  "what CI runs", but `.github/workflows/ci.yml` has no eval step and there is no
-  `make eval` target. The gate exists in the harness and nothing invokes it.
+- ~~**The eval is not wired into anything.**~~ Closed by `cb5c640`: `make eval`
+  and `make eval-live` exist, and CI runs the gate after the test suite, so a
+  prompt change that regresses the score now fails the build. The same commit
+  found that "offline" mode was opening connections to `api.smith.langchain.com`
+  because `.env` set `LANGSMITH_TRACING` and LangChain read it at import time.
+  See [ADR 0001](adr/0001-deterministic-eval-rubric.md).
 - **The Dockerfile has never been built.** It says so in its own header. Derived
   from a dependency set that was proven by building a clean venv, but unverified;
   the stated image size is an estimate.
@@ -142,9 +150,10 @@ Verify with `make lint`, `make typecheck`, `make test`, `make demo`,
 
 ### Structure
 
-- **`main.py` is 2,265 lines and unsplit.** It absorbed the old
-  `main_refactored.py` and has grown since. Splitting it was deliberately
-  deferred until there was a suite; there is one now.
+- **`main.py` is unsplit and still growing** — 2,265 lines when this was written,
+  **2,484** as of 2026-09-19 and changing **[in flight]**. It absorbed the old
+  `main_refactored.py`. Splitting it was deliberately deferred until there was a
+  suite; there is one now, and the file has grown by ~220 lines since.
 - **Module-level moviepy imports** in `main.py` and
   `agents/workflow_orchestrator.py` mean "instantiable in a test" still requires
   import-level surgery.
@@ -152,34 +161,58 @@ Verify with `make lint`, `make typecheck`, `make test`, `make demo`,
   collaborator injectable, but `create_images` / `mp4_file_enhanced` /
   `wave_file` are still module-level function calls that tests monkeypatch. That
   is the last seam, and the one the demo depends on.
-- **The async decision is still unmade.** 27 `async def`s in
-  `agents/`+`core/` coexist with blocking `requests.get` and `time.sleep`. This is
-  a batch CLI; the recommendation stands — drop async rather than complete it.
-- **60 `except Exception` handlers** across `agents/`+`core/`+`utils/`. Not all
-  are wrong, but every one at an agent boundary should catch something specific or
-  re-raise a domain error.
-- **`tenacity==9.1.2` is pinned in both dependency files and imported nowhere**,
-  while three hand-rolled backoff loops remain. Low reviewer signal; cheap.
-- **`docs/CHARACTER_ANALYSIS_GUIDE.md`, `CONTENT_CACHING_GUIDE.md` and
-  `TRANSCRIPT_AGENT_GUIDE.md`** are the three survivors of the 23 and predate the
-  consolidation. They have not been audited against the current code.
+- **The async decision is still unmade.** 27 `async def`s in `agents/`+`core/`
+  (re-counted 2026-09-19, still 27) coexist with blocking `requests.get` and
+  `time.sleep`. Now written up as
+  [ADR 0006](adr/0006-async-unresolved.md), explicitly **proposed/open**: the
+  recommendation is still to drop async, and the ADR records why that decision
+  should wait until a season run has actually been measured.
+- **56 `except Exception` handlers** across `agents/`+`core/`+`utils/` (was 60;
+  re-counted 2026-09-19). Not all are wrong, but every one at an agent boundary
+  should catch something specific or re-raise a domain error. **[in flight]** — a
+  new `core/exceptions.py` is untracked in the working tree.
+- ~~**`tenacity==9.1.2` is pinned and imported nowhere.**~~ **[in flight]** A new
+  untracked `utils/retry.py` now imports it. Uncommitted as of `c262fff`; the
+  hand-rolled backoff loops have not all been migrated.
+- ~~**The three surviving guides have not been audited.**~~ Audited 2026-09-19
+  against the current source. All three called APIs that do not exist or have
+  different signatures — see the audit notes at the top of each. The three
+  ChromaDB query methods require `show_name`, `_chunk_transcript` and
+  `_cleanup_expired_entries` were never defined, `ProcessingResult` is a Pydantic
+  model and was being subscripted, and `find_episode_transcript`'s
+  `use_discovery` parameter is never read.
+  `CONTENT_CACHING_GUIDE.md` was cut from ~700 lines to ~175 and should probably
+  be deleted outright: `core/content_cache.py` has **zero production call
+  sites**, and the guide's closing line claimed it was "integrated into the main
+  video generation pipeline".
 
 ### Staff-level gaps
 
 These are what separates a clean senior portfolio piece from a staff one. The
 eval harness (`37614a1`) closed the largest of them; these remain:
 
-- **Cost and latency budgets.** Tokens per video, p50/p95 wall clock, quota
-  behaviour. *(In progress — `core/telemetry.py` and orchestrator changes exist
-  in the working tree but are uncommitted as of `93079d6`; check `git log`.)*
+- ~~**Cost and latency budgets.**~~ Landed in `c262fff`. `core/telemetry.py`
+  records per-stage wall clock and per-call token usage across all three entry
+  points, and is inert under `ANIME_TELEMETRY=0`. Deliberately **no price table
+  ships**: the model this orchestrator hardcodes is no longer listed on the
+  pricing page, so cost is `null` with a stated reason rather than an invented
+  constant — [ADR 0005](adr/0005-measure-never-estimate.md),
+  [telemetry.md](telemetry.md). Still missing: a `run_telemetry` table, so there
+  is no cross-run p50/p95 yet.
 - **Failure semantics.** A season batch is long-running, expensive and partially
   failing. Is it idempotent? Resumable? Does a crash at scene 7 of 12 cost the
-  run? SQLite is present but used as a log, not a state machine.
-- **Observability.** `LANGSMITH_API_KEY` appears in `.env.example` and nothing
-  reads it.
-- **ADRs.** There are none. The interesting ones are already written in commit
-  messages — async, the `core.*` typing beachhead, record/replay evals, deleting
-  `ParallelImageGenerator` rather than fixing it — and want extracting.
+  run? SQLite is present but used as a log, not a state machine. **[in flight]** —
+  the working tree has run ids, `EpisodeOutcome`/`EpisodeStatus`, an
+  `is_episode_complete` resume check and a new
+  `tests/integration/test_season_resume.py`, all uncommitted as of `c262fff`.
+- **Observability.** `LANGSMITH_API_KEY` is still not read by the application.
+  The only code that touches it is `evals/run_eval.py`, which *removes* it from
+  the environment so the offline eval cannot phone home (`cb5c640`). Tracing a
+  live run remains unwired.
+- ~~**ADRs. There are none.**~~ Six now exist in [adr/](adr/), extracted from the
+  commit messages where the reasoning was originally argued: the eval rubric,
+  additive DI, the `core.*` typing beachhead, delete-rather-than-repair,
+  measure-never-estimate, and async as an explicitly open question.
 - **The legal question.** Scraping fandom transcripts to generate derivative
   anime video. "I hadn't thought about it" is a real ding in an interview.
 - **Naming.** Ten classes called `*Agent` that are sequential method calls — no

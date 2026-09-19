@@ -1,5 +1,12 @@
 # Character Analysis with ChromaDB Vector Database
 
+> **Audited 2026-09-19 against the current source.** Three Python examples and
+> one CLI example were calling APIs that do not work as shown: all three query
+> methods (`find_similar_characters`, `get_character_relationships`,
+> `search_character_moments`) require `show_name`, and `_chunk_transcript()` was
+> never defined. Every signature and command below was re-checked against
+> `agents/character_analysis_agent.py` and `main.py`.
+
 This document describes the advanced character analysis capabilities powered by ChromaDB vector database integration.
 
 ## 🎭 Overview
@@ -10,7 +17,15 @@ The Character Analysis Agent provides sophisticated character understanding thro
 - **Relationship Mapping**: Automatic detection and analysis of character interactions
 - **Character Development Tracking**: Evolution of personality traits across episodes
 - **Semantic Search**: Find specific character moments using natural language queries
-- **Cross-Show Character Comparison**: Find similar characters across different anime series
+- **Cross-Show Lookup**: Find same-named characters in other series
+  (`include_same_show=False`). Comparison *by personality* across shows is not
+  implemented — see [Cross-Show Character Analysis](#cross-show-character-analysis).
+
+> **Every query method requires `show_name`.** `find_similar_characters`,
+> `get_character_relationships` and `search_character_moments` each raise
+> `ValueError: show_name is required to prevent cross-show contamination` when it
+> is missing. The three ChromaDB collections are shared across shows, so an
+> unattributed query would read another show's rows.
 
 ## 🔧 Setup
 
@@ -157,8 +172,10 @@ Total Relationships: 5
 Search for specific character moments using natural language:
 
 ```bash
-# Search for character moments
-python main.py search-character-moments "heroic determination" --limit 10
+# Search for character moments. --show is required in practice: argparse marks it
+# optional, but the agent raises ValueError without it (see the note below).
+python main.py search-character-moments "heroic determination" \
+    --show "My Hero Academia" --limit 10
 ```
 
 Search capabilities:
@@ -243,7 +260,14 @@ below then return nothing rather than failing.
 ### Character Extraction Pipeline
 
 1. **Dialogue Parsing**: Extract character speech from transcripts
-2. **Name Normalization**: Standardize character names and aliases
+2. **Name Normalization**: `_canonicalize_character_name()` performs
+   *surface-form* canonicalization — strips bracketed stage directions, leading
+   titles and trailing honorifics (with a required separator, so "Susan"
+   survives), then normalizes case. `CharacterProfile.canonical_name` holds the
+   result and `aliases` holds the other spellings that folded into it
+   (`["Iida-Kun", "Iida Sensei"]` → `Iida`). Franchise-level identity
+   ("Deku" → "Izuku Midoriya") needs a per-show character registry the pipeline
+   does not have; the boundary is documented on the dataclass.
 3. **Trait Extraction**: Identify personality traits from dialogue patterns
 4. **Interaction Analysis**: Detect character interactions and relationships
 5. **Vector Generation**: Create semantic embeddings for search
@@ -301,24 +325,40 @@ print(f"Development Score: {development['development_score']:.2f}")
 ### Custom Character Searches
 
 ```python
-# Search for specific character traits
+# Search for specific character traits.
+# show_name is a required positional parameter, not an optional filter.
 moments = agent.search_character_moments(
-    "determined hero never give up", character_name="Izuku", limit=5
+    "determined hero never give up",
+    character_name="Izuku",
+    show_name="My Hero Academia",
+    limit=5,
 )
 
-# Find character relationships
-relationships = agent.get_character_relationships("Izuku")
+# Find character relationships (show_name is required here too)
+relationships = agent.get_character_relationships("Izuku", "My Hero Academia")
 ```
 
 ### Cross-Show Character Analysis
 
-```python
-# Find similar characters across different shows
-similar = agent.find_similar_characters("Izuku", show_name=None, limit=10)
+Cross-show search is **not** expressed by omitting the show. `show_name` is
+required — passing `None` raises `ValueError` — because it identifies the
+character's *own* show, which is then used as the exclusion filter:
 
-# This could find similar characters from other anime series
-# based on personality traits and dialogue patterns
+```python
+# Find characters in OTHER shows that match this character's name/profile.
+# show_name names Izuku's own show; include_same_show=False excludes it.
+similar = agent.find_similar_characters(
+    "Izuku", show_name="My Hero Academia", limit=10, include_same_show=False
+)
 ```
+
+With `include_same_show=True` (the default) the query is filtered to that show
+and returns similar characters from within it.
+
+Note that the `include_same_show=False` branch also filters on
+`character_name == "Izuku"`, so it finds *same-named* characters in other shows
+rather than personality-similar ones. Cross-show comparison by personality is not
+implemented today.
 
 ## 🎯 Use Cases
 
@@ -443,10 +483,12 @@ conda install -c conda-forge chromadb
 ```
 
 **Memory Issues with Large Datasets**
-```python
-# Reduce batch sizes for processing
-chunks = self._chunk_transcript(transcript, chunk_size=500)  # Smaller chunks
-```
+
+There is no transcript-chunking knob. `analyze_episode_characters()` splits a
+transcript by speaker via `_extract_character_dialogues_with_aliases()`, so
+memory scales with the number of distinct speakers and their dialogue, not with a
+configurable chunk size. To reduce peak memory, analyse fewer episodes per
+process rather than tuning a parameter that does not exist.
 
 **Embedding Model Download Issues**  
 ```python

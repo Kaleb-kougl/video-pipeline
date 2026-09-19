@@ -108,7 +108,7 @@ episode-discovery result degrades the run while a weak transcript stops it.
 Without the `critical` flag every validator ends up either advisory (and
 ignored) or fatal (and disabled in practice).
 
-### Content caching to avoid re-spending on generation
+### Content caching — built, and not wired in
 
 Regenerating a scene costs an API call and wall-clock time, and adjacent
 episodes of the same show ask for visually near-identical scenes. `ContentCache`
@@ -116,9 +116,15 @@ episodes of the same show ask for visually near-identical scenes. `ContentCache`
 `SimilarityCalculator`, which scores prompts by weighted overlap of extracted
 visual keywords (0.7) against raw text similarity (0.3) and reuses a hit above
 the configured threshold (default 0.85). Entries carry a TTL and are evicted
-LRU, so the cache cannot grow unbounded across a season batch. It tracks
-`CacheStats.hit_rate` at runtime, but no benchmark has been run against it, so
-no savings figure is claimed here.
+LRU. It is well covered by unit tests.
+
+**No production code calls it.** A grep for `ContentCache` outside its own
+module and the test suite returns nothing, so the saving described above is
+theoretical: every scene is still generated from scratch. It is listed here
+because the mechanism is real and the honest status is more useful than a
+quiet omission — the same reasoning that took the platform exporters down to
+`NotImplementedError` rather than leaving them returning `success: True`.
+Wiring it into the image path is the obvious next change.
 
 ### Visual coherence across scenes
 
