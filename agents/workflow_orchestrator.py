@@ -131,19 +131,32 @@ class WorkflowOrchestrator:
         )  # Configuration management
 
         # Phase 2 Quality Enhancement components
-        self.character_analysis_agent = (
-            character_analysis_agent
-            if character_analysis_agent is not None
-            else CharacterAnalysisAgent()  # Character analysis with ChromaDB
-        )
-        self.character_enhancer = (
-            character_enhancer
-            if character_enhancer is not None
-            else EpisodeCharacterEnhancer(
+        # ChromaDB is an optional extra (requirements-vector.txt). main.py catches
+        # the ImportError and passes None, but this fallback then reconstructed the
+        # agent uncaught, so a missing extra made EVERY CLI subcommand fail at
+        # construction. Degrade here too, or the optional dependency is not optional.
+        if character_analysis_agent is not None:
+            self.character_analysis_agent: CharacterAnalyzer | None = character_analysis_agent
+        else:
+            try:
+                self.character_analysis_agent = CharacterAnalysisAgent()
+            except ImportError as exc:
+                self.character_analysis_agent = None
+                logger.info(
+                    "Character analysis disabled (%s). Install the vector extras "
+                    "from requirements-vector.txt to enable it.",
+                    exc,
+                )
+        if character_enhancer is not None:
+            self.character_enhancer: EpisodeCharacterEnhancer | None = character_enhancer
+        elif self.character_analysis_agent is not None:
+            self.character_enhancer = EpisodeCharacterEnhancer(
                 character_analyzer=self.character_analysis_agent,
                 timing_calculator=self.video_agent,
             )
-        )
+        else:
+            # No analyser, so nothing to enhance with.
+            self.character_enhancer = None
         self.visual_coherence = (
             visual_coherence
             if visual_coherence is not None
@@ -366,7 +379,18 @@ class WorkflowOrchestrator:
 
         # Phase 2 Step 1: Character Analysis Integration
         # Analyze characters and enhance episode with character-aware timing
+        if self.character_analysis_agent is None or self.character_enhancer is None:
+            # Raise so the fallback below runs for a stated reason, rather than
+            # arriving there via an AttributeError nobody reads.
+            raise_reason: Exception | None = RuntimeError(
+                "character analysis is unavailable (ChromaDB extras not installed)"
+            )
+        else:
+            raise_reason = None
+
         try:
+            if raise_reason is not None:
+                raise raise_reason
             with self.telemetry.stage("character_enrichment"):
                 # Get character analysis for this episode
                 character_analysis = self.character_analysis_agent.analyze_episode_characters(
