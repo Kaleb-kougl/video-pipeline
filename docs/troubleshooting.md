@@ -1,11 +1,11 @@
 # Troubleshooting
 
 Failure modes that have actually happened, each as **symptom → cause → action**.
-Every one was checked against the source at `689c889`; where the behaviour is
+Every one was checked against the source at `7e48b43`; where the behaviour is
 surprising the file and function that produces it is named so you can confirm it
 yourself.
 
-<!-- verified: b833e6a sources: main.py, agents/transcript_source_agent.py, agents/character_analysis_agent.py, agents/workflow_orchestrator.py, media/media_utils.py, pyproject.toml -->
+<!-- verified: 7e48b43 sources: main.py, agents/transcript_source_agent.py, agents/character_analysis_agent.py, agents/workflow_orchestrator.py, media/media_utils.py, pyproject.toml -->
 
 For normal operation see [runbook.md](runbook.md).
 
@@ -70,24 +70,30 @@ you.
 
 ## Environment
 
-### Every CLI command dies with `ImportError: ChromaDB not available`
+### Character analysis is skipped and the log says ChromaDB is unavailable
 
-**Symptom.** `python main.py stats` — or any other subcommand — raises before it
-does anything.
+**Symptom.** A run completes, but the log carries `Character analysis disabled`
+and scenes fall back to uniform durations instead of character-aware ones.
 
-**Cause.** `AnimeVideoGenerator.__init__` catches the `ImportError` from
-`CharacterAnalysisAgent()` and sets `self.character_agent = None`, then passes
-that `None` straight to `WorkflowOrchestrator(character_analysis_agent=None)` —
-whose `None` branch constructs `CharacterAnalysisAgent()` again, uncaught.
-Verified by forcing `agents.character_analysis_agent.CHROMA_AVAILABLE = False`
-and constructing `AnimeVideoGenerator()`: it raises. The graceful degradation
-the first `try` intends does not currently reach the orchestrator.
+**Cause.** ChromaDB and sentence-transformers are optional extras
+(`requirements-vector.txt`, over 1 GB of wheels). Without them
+`CharacterAnalysisAgent()` raises `ImportError`, and both
+`AnimeVideoGenerator.__init__` and `WorkflowOrchestrator.__init__` degrade to
+`None` rather than failing. The enrichment step then raises a stated reason into
+its fallback, so the log says the extra is absent rather than reporting a
+generic "Character enhancement failed".
 
-**Action.** Install the extras — `pip install -r requirements.txt`, or
-`pip install -r requirements-vector.txt` for ChromaDB and sentence-transformers
-alone. `make install-demo` and the Docker image deliberately omit them (over 1 GB
-of wheels), which is why `make demo` patches `CharacterAnalysisAgent` out
-entirely and works without them.
+**Action.** Install the extras if you want enrichment —
+`pip install -r requirements.txt`, or `pip install -r requirements-vector.txt`
+for ChromaDB and sentence-transformers alone. Otherwise nothing is required;
+`make install-demo` and the Docker image omit them deliberately, and `make demo`
+runs without them.
+
+> **Until `541e86a` this was fatal.** The orchestrator's `None` branch
+> reconstructed `CharacterAnalysisAgent()` uncaught, so a missing optional extra
+> made *every* CLI subcommand raise at construction. Found while writing this
+> file: the claim being documented turned out to be false, which is why the
+> pipeline now degrades as advertised.
 
 ### `make test` says a dev tool is missing
 

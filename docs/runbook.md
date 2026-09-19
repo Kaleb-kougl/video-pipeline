@@ -1,12 +1,12 @@
 # Runbook
 
 Normal operating procedures. Every command here was run, or read off the source
-that implements it, at `689c889`. For failures see
+that implements it, at `d98476a`. For failures see
 [troubleshooting.md](troubleshooting.md); for cost and latency see
 [operations.md](operations.md); for what the database holds see
 [data-model.md](data-model.md).
 
-<!-- verified: 689c889 sources: main.py, core/database.py, core/schemas.py, core/telemetry.py, scripts/demo.py, config/settings.py -->
+<!-- verified: 7e48b43 sources: main.py, core/database.py, core/schemas.py, core/telemetry.py, scripts/demo.py, config/settings.py -->
 
 ## Before you start
 
@@ -115,22 +115,43 @@ python main.py stats --run <run_id>
 
 `stats` lists up to ten runs whose status is not `succeeded`, so an operator who
 has lost the run id of a killed batch can still find it. Real output from a
-seeded database, killed after episode 2:
+seeded database whose third episode failed its encode and was then killed:
 
 ```
 Processing Statistics:
 Total episodes: 3
 Status counts: {'in_progress': 1, 'succeeded': 2}
-Recent activity: []
+
+Recent activity (last 24h):
+  audio_synthesis: completed x3
+  character_enrichment: completed x3
+  content_extraction: completed x3
+  image_generation: completed x3
+  persistence: completed x3
+  prompt_construction: completed x3
+  quality_profile: completed x3
+  summarization: completed x3
+  video_encode: completed x2
+  video_encode: failed x1
 
 Runs that did not finish cleanly:
   My_Hero_Academia_S1_20260919T101144_17039f1e (running) - My Hero Academia season 1
 Inspect one with: stats --run <run_id>
 ```
 
-`Recent activity` is **structurally always empty**: it reads `processing_logs`,
-and `log_processing_task` has no callers anywhere in the repository. Do not read
-it as "nothing happened in the last 24 hours".
+`Recent activity` is a 24-hour rollup of `processing_logs`, one row per
+pipeline stage per attempt, written by the orchestrator from the same `finally`
+that prints the telemetry table. It used to be structurally always empty: the
+table had no writer anywhere in the repository and the section printed a bare
+`[]`. Two things it still does not cover:
+
+- **Only 24 hours.** `none` means nothing ran today, not that nothing ever ran.
+  For the full history of one episode, query the table by `episode_id`; for one
+  run, use `stats --run`.
+- **An attempt that dies before the episode row exists logs nothing.**
+  `processing_logs.episode_id` is an enforced foreign key, so a run that fails
+  during `content_extraction` on an episode `begin_episode` never touched has
+  nothing to attach its stages to.
 
 ```
 Run My_Hero_Academia_S1_20260919T101144_17039f1e: running

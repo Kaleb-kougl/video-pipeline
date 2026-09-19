@@ -379,3 +379,210 @@ class TestRunTelemetryTable:
 
         assert database_manager.save_run_telemetry(telemetry.to_dict()) == 0
         assert database_manager.get_run_telemetry("job-3") == []
+
+
+# The v1 shape: everything `_migrate` produced at `e0264e9`, with the pragma
+# set, and - the point of this fixture - *no* `season_summaries`. That table
+# was created lazily by whichever season-summary method ran first, so a v1
+# database that had never written a summary genuinely did not have it.
+V1_SCHEMA = (
+    LEGACY_SCHEMA[0],
+    LEGACY_SCHEMA[1],
+    """
+    CREATE TABLE IF NOT EXISTS runs (
+        run_id TEXT PRIMARY KEY,
+        show TEXT NOT NULL,
+        season TEXT NOT NULL,
+        command TEXT,
+        status TEXT NOT NULL DEFAULT 'running',
+        start_episode INTEGER,
+        end_episode INTEGER,
+        full_processing INTEGER NOT NULL DEFAULT 0,
+        resumed_count INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        finished_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS run_telemetry (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL,
+        run_id TEXT,
+        scope TEXT NOT NULL,
+        stage TEXT,
+        wall_seconds REAL,
+        ok INTEGER,
+        error TEXT,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cost_amount REAL,
+        cost_currency TEXT,
+        cost_note TEXT,
+        started_at TEXT,
+        recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+)
+
+
+@pytest.fixture
+def v1_db_path(tmp_path):
+    """A database at schema v1, with the v1 columns and no season summaries."""
+    path = str(tmp_path / "v1.db")
+    with sqlite3.connect(path) as conn:
+        for statement in V1_SCHEMA:
+            conn.execute(statement)
+        for column in (
+            "attempts INTEGER NOT NULL DEFAULT 0",
+            "last_error TEXT",
+            "run_id TEXT",
+            "completed_at TIMESTAMP",
+        ):
+            conn.execute(f"ALTER TABLE episodes ADD COLUMN {column}")
+        conn.execute(
+            """
+            INSERT INTO episodes (show, season, episode, url, status, attempts)
+            VALUES ('My Hero Academia', '1', '1', 'https://example.invalid/e1', 'succeeded', 2)
+        """
+        )
+        conn.execute("PRAGMA user_version = 1")
+    return path
+
+
+def _tables(path: str) -> set[str]:
+    with sqlite3.connect(path) as conn:
+        return {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+
+class TestSeasonSummariesJoinTheMigrationPath:
+    """v2: ``season_summaries`` is created by ``init_database``, not on demand.
+
+    It used to be created by ``init_season_summaries_table``, which every
+    season-summary method called on itself. That put the table outside the
+    ``user_version`` path entirely: a fresh database did not have it, and no
+    migration could ever be written against it because nothing knew when it
+    had appeared.
+    """
+
+    def test_a_fresh_database_has_the_table_before_any_summary_is_written(self, tmp_path):
+        path = str(tmp_path / "fresh.db")
+        DatabaseManager(path)
+
+        assert "season_summaries" in _tables(path)
+
+    def test_a_v1_database_gains_the_table_and_reports_the_new_version(self, v1_db_path):
+        assert "season_summaries" not in _tables(v1_db_path)
+
+        db = DatabaseManager(v1_db_path)
+
+        assert "season_summaries" in _tables(v1_db_path)
+        assert db.schema_version == SCHEMA_VERSION == 2
+
+    def test_the_v1_state_machine_survives_the_v2_migration(self, v1_db_path):
+        """v1 -> v2 adds a table. It must not touch a row that a resume reads."""
+        db = DatabaseManager(v1_db_path)
+
+        row = db.get_episode("My Hero Academia", "1", "1")
+        assert row["status"] == EpisodeStatus.SUCCEEDED.value
+        assert row["attempts"] == 2
+        assert db.is_episode_complete("My Hero Academia", 1, 1) is True
+
+    def test_a_legacy_databases_existing_summaries_are_left_alone(self, legacy_db_path):
+        """A v0 database already has the table, with rows. Adopting it is a no-op."""
+        db = DatabaseManager(legacy_db_path)
+
+        summary = db.get_season_summary("My Hero Academia", 1)
+        assert summary is not None and summary["summary"] == "legacy season summary"
+        assert db.schema_version == SCHEMA_VERSION
+
+
+class TestSeasonSummaryUpsert:
+    """Re-saving a season summary updates it instead of replacing the row.
+
+    ``INSERT OR REPLACE`` deletes the conflicting row and inserts a new one -
+    the bug ``save_episode`` was moved off in ``e0264e9``. Here it rotated the
+    ``id`` that ``create-season-summary`` prints back to the user and reset
+    ``created_at`` to now, so the row could no longer say when the season was
+    first summarised.
+    """
+
+    def test_resaving_keeps_the_id(self, database_manager):
+        first = database_manager.save_season_summary("Show", 1, "first pass")
+        second = database_manager.save_season_summary("Show", 1, "second pass")
+
+        assert first is not None
+        assert second == first
+        assert database_manager.get_season_summary("Show", 1)["summary"] == "second pass"
+
+    def test_resaving_keeps_created_at_and_moves_updated_at(self, database_manager):
+        database_manager.save_season_summary("Show", 1, "first pass")
+        with sqlite3.connect(database_manager.db_path) as conn:
+            conn.execute("UPDATE season_summaries SET created_at = '2020-01-01 00:00:00'")
+
+        database_manager.save_season_summary("Show", 1, "second pass")
+
+        row = database_manager.get_season_summary("Show", 1)
+        assert row["created_at"] == "2020-01-01 00:00:00"
+        assert row["updated_at"] != "2020-01-01 00:00:00"
+
+    def test_content_is_replaced_not_merged(self, database_manager):
+        database_manager.save_season_summary(
+            "Show", 1, "first", analysis_data={"a": 1}, media_files={"video": "x.mp4"}
+        )
+        database_manager.save_season_summary("Show", 1, "second")
+
+        row = database_manager.get_season_summary("Show", 1)
+        assert row["analysis_data"] is None
+        assert row["media_files"] is None
+
+    def test_two_seasons_of_one_show_stay_separate(self, database_manager):
+        database_manager.save_season_summary("Show", 1, "s1")
+        database_manager.save_season_summary("Show", 2, "s2")
+
+        assert len(database_manager.get_all_season_summaries("Show")) == 2
+
+
+class TestForeignKeysAreEnforced:
+    """``PRAGMA foreign_keys`` is off by default, per connection.
+
+    Until ``_connect`` existed, ``FOREIGN KEY (episode_id) REFERENCES
+    episodes (id)`` on ``processing_logs`` was decorative: SQLite parsed it and
+    then ignored it on every connection this module opened.
+    """
+
+    def test_every_connection_this_module_opens_has_it_on(self, database_manager):
+        with database_manager._connect() as conn:
+            assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+    def test_a_log_row_cannot_reference_an_episode_that_does_not_exist(self, database_manager):
+        database_manager.log_processing_task(9999, "video_encode", "completed")
+
+        with sqlite3.connect(database_manager.db_path) as conn:
+            assert conn.execute("SELECT COUNT(*) FROM processing_logs").fetchone()[0] == 0
+
+    def test_the_rejection_is_logged_not_raised(self, database_manager):
+        """An audit trail must never be able to fail the run it describes."""
+        database_manager.log_processing_task(9999, "video_encode", "failed", "boom", 1.5)
+        # Reaching here without an exception is the assertion.
+
+    def test_a_log_row_against_a_real_episode_is_accepted(self, database_manager):
+        database_manager.save_episode("Show", "1", "1", "https://example.invalid/e1")
+        episode_id = database_manager.get_episode_id("Show", 1, 1)
+        assert episode_id is not None
+
+        database_manager.log_processing_task(episode_id, "video_encode", "completed", None, 2.5)
+
+        activity = database_manager.get_processing_stats()["recent_activity"]
+        assert activity == [{"task_type": "video_encode", "status": "completed", "count": 1}]
+
+    def test_migrating_a_legacy_database_leaves_no_violations(self, legacy_db_path):
+        """Turning enforcement on must not reject the database that already exists."""
+        db = DatabaseManager(legacy_db_path)
+
+        with db._connect() as conn:
+            assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    def test_an_unknown_episode_has_no_id(self, database_manager):
+        assert database_manager.get_episode_id("Nobody", 9, 9) is None

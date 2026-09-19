@@ -1734,7 +1734,11 @@ async def main():
     batch_parser.add_argument(
         "--run-id",
         dest="run_id",
-        help="Resume this exact run id (implies --resume). See the run-status command.",
+        help=(
+            "Resume this exact run id (implies --resume). Run ids are printed by "
+            "process-season; list the unfinished ones with `stats`, and inspect one "
+            "with `stats --run <run_id>`"
+        ),
     )
 
     # Process complete season summary with multimedia
@@ -1760,7 +1764,11 @@ async def main():
         "-f",
         choices=["standard", "youtube_shorts", "tiktok", "instagram_reels", "twitter"],
         default="standard",
-        help="Export format for the video",
+        help=(
+            "Requested export format. Only 'standard' produces a file: the platform "
+            "exporters raise NotImplementedError, so any other value is recorded as "
+            "requested, warned about, and the standard MP4 is what you get"
+        ),
     )
 
     # View season summaries
@@ -1820,9 +1828,17 @@ async def main():
     subparsers.add_parser("quality-dashboard", help="Show quality monitoring dashboard")
 
     # Quality trends
-    trends_parser = subparsers.add_parser("quality-trends", help="Show quality trends analysis")
-    trends_parser.add_argument("--show", help="Filter by specific show")
-    trends_parser.add_argument("--days", type=int, default=30, help="Number of days to analyze")
+    trends_parser = subparsers.add_parser(
+        "quality-trends",
+        help="Quality trends analysis - NOT IMPLEMENTED; prints a notice and exits",
+    )
+    trends_parser.add_argument("--show", help="Accepted and ignored: the command is a stub")
+    trends_parser.add_argument(
+        "--days",
+        type=int,
+        default=30,
+        help="Accepted and ignored: the command is a stub",
+    )
 
     # Transcript source discovery commands
     sources_parser = subparsers.add_parser(
@@ -2047,7 +2063,18 @@ async def main():
                 print("Processing Statistics:")
                 print(f"Total episodes: {stats['total_episodes']}")
                 print(f"Status counts: {stats['status_counts']}")
-                print(f"Recent activity: {stats['recent_activity']}")
+
+                # Per-stage outcomes from the last 24 hours, written by the
+                # orchestrator into `processing_logs`. This section used to
+                # print an empty list unconditionally, because the table had
+                # no writer at all.
+                recent = stats["recent_activity"]
+                if recent:
+                    print("\nRecent activity (last 24h):")
+                    for row in recent:
+                        print(f"  {row['task_type']}: {row['status']} x{row['count']}")
+                else:
+                    print("\nRecent activity (last 24h): none")
 
                 # Surface anything left half-done, so a user who does not
                 # already know a run id can still find the run worth resuming.

@@ -18,6 +18,16 @@ things make that possible:
     One row per stage plus a run-level row for each job, keyed by job id - the
     shape ``core.telemetry.RunTelemetry.to_dict()`` already produces.
 
+``processing_logs``
+    The per-*episode* audit trail: one row per pipeline stage per attempt,
+    pointed at ``episodes.id``. ``run_telemetry`` records the same stages
+    keyed by *job*, which answers "what did this job cost"; this table answers
+    "what has happened to episode 7, and when", which no other table can.
+
+Every connection is opened through :meth:`DatabaseManager._connect`, which
+turns on ``PRAGMA foreign_keys``. SQLite defaults it *off*, per connection, so
+a declared foreign key is decorative until something sets it.
+
 Schema changes are applied by :meth:`DatabaseManager.init_database`, which
 migrates an existing database in place rather than expecting a fresh one; see
 :data:`SCHEMA_VERSION`.
@@ -42,7 +52,12 @@ logger = logging.getLogger(__name__)
 #: 1 - adds run identity and the per-episode state machine: the ``runs`` and
 #:     ``run_telemetry`` tables, and the ``attempts``/``last_error``/``run_id``/
 #:     ``completed_at`` columns on ``episodes``.
-SCHEMA_VERSION = 1
+#: 2 - brings ``season_summaries`` inside the migration path. The table was
+#:     previously created lazily by whichever season-summary method happened to
+#:     run first, so a fresh database did not have it and nothing could ever
+#:     migrate it. No data change: the DDL is byte-for-byte the one the lazy
+#:     creator used, so an existing table is left exactly as it is.
+SCHEMA_VERSION = 2
 
 #: Statuses that mean "this episode's work is done; do not pay for it again".
 #: Only a recorded success qualifies. ``in_progress`` deliberately does not:
@@ -64,6 +79,26 @@ class DatabaseManager:
         self.db_path = db_path
         self.init_database()
 
+    def _connect(self) -> sqlite3.Connection:
+        """
+        Open a connection with foreign keys enforced.
+
+        ``PRAGMA foreign_keys`` is **off by default and scoped to a single
+        connection**, so ``FOREIGN KEY (episode_id) REFERENCES episodes (id)``
+        in the DDL enforced nothing at all until this existed: a
+        ``processing_logs`` row could point at an episode that had never been
+        written, and deleting an episode would silently orphan its logs.
+
+        Set here rather than at each call site because this class opens a
+        connection per operation; one of them forgetting would be invisible
+        until the day it mattered. The pragma is a no-op inside a transaction,
+        which is why it runs immediately after ``connect`` and before anything
+        else touches the connection.
+        """
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
+
     def init_database(self) -> None:
         """
         Create the schema if absent, and migrate it forward if it is old.
@@ -76,7 +111,7 @@ class DatabaseManager:
         carries no evidence that the episode's media was ever produced.
         Claiming otherwise would make a resume skip work that never happened.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             # Create the 'episodes' table to store details about each show episode.
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS episodes (
@@ -209,6 +244,35 @@ class DatabaseManager:
             ON run_telemetry(job_id, scope)
         """)
 
+        # -- season_summaries: v2. This table used to be created lazily by
+        # `init_season_summaries_table`, which every season-summary method
+        # called on itself. That put it outside the `user_version` path
+        # entirely: a fresh database did not have it, its shape was whatever
+        # the running build's lazy creator said, and no future migration could
+        # ever be written against it because nothing knew when it appeared.
+        # The DDL below is that creator's, unchanged, so an existing table is
+        # already at this shape and `IF NOT EXISTS` leaves it untouched.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS season_summaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                show TEXT NOT NULL,
+                season INTEGER NOT NULL,
+                summary TEXT NOT NULL,
+                analysis_data TEXT,
+                media_files TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(show, season)
+            )
+        """)
+
+        # `processing_logs` is read by the "recent activity" rollup and by
+        # anyone asking what happened to one episode; both want the episode.
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_processing_logs_episode
+            ON processing_logs(episode_id, created_at)
+        """)
+
         if before != SCHEMA_VERSION:
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             logger.info(f"Database schema migrated from version {before} to {SCHEMA_VERSION}")
@@ -216,7 +280,7 @@ class DatabaseManager:
     @property
     def schema_version(self) -> int:
         """The schema generation this database file is currently at."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             return int(conn.execute("PRAGMA user_version").fetchone()[0])
 
     def save_episode(
@@ -252,7 +316,7 @@ class DatabaseManager:
             leaves its state machine alone.
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 conn.execute(
                     """
                     INSERT INTO episodes
@@ -295,7 +359,7 @@ class DatabaseManager:
             sqlite3.Row: The episode data, or None if not found.
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
                     """
@@ -326,7 +390,7 @@ class DatabaseManager:
             list: List of episode rows.
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 conn.row_factory = sqlite3.Row
 
                 if season:
@@ -354,6 +418,19 @@ class DatabaseManager:
             logger.error(f"Database error retrieving episodes for {show}: {e}")
             return []
 
+    def get_episode_id(self, show: str, season: int | str, episode: int | str) -> int | None:
+        """
+        The surrogate ``episodes.id`` for an episode, or ``None`` if unknown.
+
+        ``processing_logs.episode_id`` is the only thing in the schema that
+        uses this key - everything else addresses an episode by
+        ``(show, season, episode)``. A caller that cannot resolve an id must
+        not log: with foreign keys enforced, an invented id is rejected, and
+        before they were enforced it was worse, because it was accepted.
+        """
+        row = self.get_episode(show, str(season), str(episode))
+        return None if row is None else int(row["id"])
+
     def log_processing_task(
         self,
         episode_id: int,
@@ -363,20 +440,31 @@ class DatabaseManager:
         processing_time: float | None = None,
     ) -> None:
         """
-        Log a processing task to the database.
+        Record one pipeline stage against one episode.
+
+        Written by :meth:`agents.workflow_orchestrator.WorkflowOrchestrator._record_processing_logs`
+        from the same ``finally`` that publishes the telemetry report, so a
+        failed attempt is logged as well as a successful one. Append-only: a
+        retried episode adds rows rather than replacing the failed attempt's.
 
         Args:
-            episode_id (int): The episode ID.
-            task_type (str): Type of task (e.g., 'transcript_discovery', 'video_generation').
-            status (str): Task status ('pending', 'completed', 'failed').
-            error_message (str, optional): Error message if task failed.
-            processing_time (float, optional): Time taken to complete task in seconds.
+            episode_id (int): ``episodes.id``. See :meth:`get_episode_id`.
+            task_type (str): The pipeline stage (``'transcript_discovery'``,
+                ``'video_encode'``, ...) - the names in
+                :data:`core.telemetry.STAGE_DOC_REFERENCE`.
+            status (str): ``'completed'`` or ``'failed'``.
+            error_message (str, optional): Why it failed.
+            processing_time (float, optional): Stage wall-clock seconds.
+
+        A database error is logged and swallowed, including the
+        ``IntegrityError`` a bad ``episode_id`` now raises: an audit trail must
+        never be able to fail the run it is describing.
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 conn.execute(
                     """
-                    INSERT INTO processing_logs 
+                    INSERT INTO processing_logs
                     (episode_id, task_type, status, error_message, processing_time)
                     VALUES (?, ?, ?, ?, ?)
                 """,
@@ -396,7 +484,7 @@ class DatabaseManager:
             dict: Statistics about processed episodes.
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 conn.row_factory = sqlite3.Row
 
                 # Get episode counts by status
@@ -411,12 +499,14 @@ class DatabaseManager:
                 cursor = conn.execute("SELECT COUNT(*) as total FROM episodes")
                 total = cursor.fetchone()["total"]
 
-                # Get recent processing activity
+                # Get recent processing activity. Ordered so the output is
+                # stable enough to paste into a runbook.
                 cursor = conn.execute("""
-                    SELECT task_type, status, COUNT(*) as count 
-                    FROM processing_logs 
+                    SELECT task_type, status, COUNT(*) as count
+                    FROM processing_logs
                     WHERE created_at > datetime('now', '-24 hours')
                     GROUP BY task_type, status
+                    ORDER BY task_type, status
                 """)
                 recent_activity = cursor.fetchall()
 
@@ -452,32 +542,14 @@ class DatabaseManager:
                 "unfinished_runs": [],
             }
 
-    def update_episode_status(self, show: str, season: str, episode: str, status: str) -> None:
-        """
-        Update the status of an episode.
-
-        Args:
-            show (str): The name of the show.
-            season (str): The season number.
-            episode (str): The episode number.
-            status (str): New status ('pending', 'completed', 'failed').
-        """
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    """
-                    UPDATE episodes 
-                    SET status = ?, updated_at = CURRENT_TIMESTAMP 
-                    WHERE show = ? AND season = ? AND episode = ?
-                """,
-                    (status, show, season, episode),
-                )
-
-                logger.debug(f"Updated episode status: {show} S{season}E{episode} -> {status}")
-
-        except sqlite3.Error as e:
-            logger.error(f"Database error updating episode status: {e}")
-            raise
+    # `update_episode_status(show, season, episode, status: str)` used to live
+    # here. It was removed rather than wired up: it had no callers, and it was
+    # a hazard waiting for one. It took a bare string and its own docstring
+    # offered `'completed'` - a value `core.schemas.EpisodeStatus` does not
+    # have, so writing it would make `get_episode_status` return None and a
+    # resume redo an episode that was finished. `begin_episode` and
+    # `complete_episode` are the validated writers for this column; a second,
+    # unvalidated one is not a convenience.
 
     # ------------------------------------------------------------------
     # Run identity and the per-episode state machine
@@ -514,7 +586,7 @@ class DatabaseManager:
         Returns:
             The ``run_id``, for convenient chaining.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO runs
@@ -545,7 +617,7 @@ class DatabaseManager:
 
     def finish_run(self, run_id: str, status: RunStatus, error: str | None = None) -> None:
         """Record a run's terminal state. A run left ``running`` is one that died."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE runs
@@ -559,7 +631,7 @@ class DatabaseManager:
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         """The ``runs`` row for ``run_id``, or ``None``."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
             return dict(row) if row else None
@@ -578,7 +650,7 @@ class DatabaseManager:
         * ``partial`` / ``failed`` - episodes are left to redo, which is
           precisely what a resume is for once the cause is fixed.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """
@@ -624,7 +696,7 @@ class DatabaseManager:
         Creates a placeholder row when the episode has never been seen, so the
         state exists even if discovery fails before anything is saved.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO episodes (show, season, episode, url, status, attempts, run_id)
@@ -662,7 +734,7 @@ class DatabaseManager:
         failure.
         """
         succeeded = status is EpisodeStatus.SUCCEEDED
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE episodes
@@ -720,7 +792,7 @@ class DatabaseManager:
 
     def get_run_episodes(self, show: str, season: int | str) -> list[dict[str, Any]]:
         """Every known episode of a season with its state, in episode order."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 """
@@ -821,7 +893,7 @@ class DatabaseManager:
             )
 
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 conn.executemany(
                     """
                     INSERT INTO run_telemetry
@@ -839,7 +911,7 @@ class DatabaseManager:
 
     def get_run_telemetry(self, job_id: str) -> list[dict[str, Any]]:
         """Every telemetry row recorded for a job id, oldest first."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM run_telemetry WHERE job_id = ? ORDER BY id",
@@ -847,23 +919,14 @@ class DatabaseManager:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def init_season_summaries_table(self) -> None:
-        """Initialize the season summaries table if it doesn't exist."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS season_summaries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    show TEXT NOT NULL,
-                    season INTEGER NOT NULL,
-                    summary TEXT NOT NULL,
-                    analysis_data TEXT,
-                    media_files TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(show, season)
-                )
-            """)
-            logger.debug("Season summaries table initialized")
+    # ------------------------------------------------------------------
+    # Season summaries
+    #
+    # `init_season_summaries_table()` used to sit here, and every method below
+    # called it first. The table is created by `_migrate` now (schema v2), so
+    # it exists from the moment a `DatabaseManager` does, like every other
+    # table.
+    # ------------------------------------------------------------------
 
     def save_season_summary(
         self,
@@ -885,27 +948,45 @@ class DatabaseManager:
 
         Returns:
             The ID of the saved summary
-        """
-        # Ensure table exists
-        self.init_season_summaries_table()
 
+        Note:
+            This is an UPSERT, for the reason ``save_episode`` is one. The old
+            ``INSERT OR REPLACE`` *deletes* the conflicting row and inserts a
+            new one, so regenerating a season summary rotated its ``id`` and
+            reset ``created_at`` to now - the row could no longer say when the
+            season was first summarised, and any id held elsewhere (a printed
+            ``summary_id``, a future foreign key) pointed at a row that no
+            longer existed. With ``PRAGMA foreign_keys`` on, that delete is the
+            orphaning hazard rather than merely an untidy one. The UPSERT
+            updates the content and leaves the identity alone.
+        """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 # Convert dictionaries to JSON strings
                 analysis_json = json.dumps(analysis_data) if analysis_data else None
                 media_json = json.dumps(media_files) if media_files else None
 
-                # Use INSERT OR REPLACE to handle duplicates
-                cursor = conn.execute(
+                conn.execute(
                     """
-                    INSERT OR REPLACE INTO season_summaries 
+                    INSERT INTO season_summaries
                     (show, season, summary, analysis_data, media_files, updated_at)
                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(show, season) DO UPDATE SET
+                        summary = excluded.summary,
+                        analysis_data = excluded.analysis_data,
+                        media_files = excluded.media_files,
+                        updated_at = CURRENT_TIMESTAMP
                 """,
                     (show, season, summary, analysis_json, media_json),
                 )
 
-                summary_id = cursor.lastrowid
+                # Read the id back rather than trusting `lastrowid`, which
+                # reports the inserted row only on the INSERT branch.
+                row = conn.execute(
+                    "SELECT id FROM season_summaries WHERE show = ? AND season = ?",
+                    (show, season),
+                ).fetchone()
+                summary_id = None if row is None else int(row[0])
                 logger.info(f"Saved season summary: {show} Season {season} (ID: {summary_id})")
                 return summary_id
 
@@ -924,11 +1005,8 @@ class DatabaseManager:
         Returns:
             Dictionary with summary data or None if not found
         """
-        # Ensure table exists
-        self.init_season_summaries_table()
-
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
                     """
@@ -970,11 +1048,8 @@ class DatabaseManager:
         Returns:
             List of season summary dictionaries
         """
-        # Ensure table exists
-        self.init_season_summaries_table()
-
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 conn.row_factory = sqlite3.Row
 
                 if show:

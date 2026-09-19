@@ -4,6 +4,8 @@ Main workflow orchestrator that coordinates all agents.
 
 import logging
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
@@ -184,6 +186,13 @@ class WorkflowOrchestrator:
             telemetry if telemetry is not None else RunTelemetry.from_env("no-run-started")
         )
 
+        # Stage outcomes waiting to be written to `processing_logs`, filled by
+        # `_stage` and drained by `_record_processing_logs`. Buffered rather
+        # than written as each stage ends because the episode's row - and so
+        # the `episodes.id` the foreign key needs - may not exist until the
+        # persistence stage partway through the run.
+        self._pending_stage_logs: list[tuple[str, bool, str | None, float]] = []
+
         logger.info("WorkflowOrchestrator initialized with all agents")
 
     # ------------------------------------------------------------------
@@ -217,6 +226,95 @@ class WorkflowOrchestrator:
         except Exception as e:  # noqa: BLE001 - never fail a run over telemetry
             logger.warning(f"Could not persist run telemetry: {e}")
 
+    # ------------------------------------------------------------------
+    # Stage boundaries and the per-episode audit trail
+    # ------------------------------------------------------------------
+
+    @contextmanager
+    def _stage(self, name: str) -> Iterator[None]:
+        """
+        Time a pipeline stage, for telemetry *and* for ``processing_logs``.
+
+        Wraps ``RunTelemetry.stage`` and records the same boundary a second
+        time, in memory, for the per-episode audit trail. Deliberately not
+        read back off the telemetry payload afterwards: ``ANIME_TELEMETRY=0``
+        yields an inert collector that records no stages at all, and "the
+        operator turned off timing" is not a reason for the database to forget
+        that an episode's video encode failed.
+
+        The exception propagates unchanged, as it does through
+        ``telemetry.stage`` - a stage that raised is recorded, not swallowed.
+        """
+        started = time.perf_counter()
+        ok = True
+        error: str | None = None
+        try:
+            with self.telemetry.stage(name):
+                yield
+        except BaseException as exc:
+            ok = False
+            error = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            self._pending_stage_logs.append((name, ok, error, time.perf_counter() - started))
+
+    def _begin_stage_logs(self) -> None:
+        """Drop any stage outcomes left over from an earlier unit of work."""
+        self._pending_stage_logs = []
+
+    def _record_processing_logs(
+        self,
+        show: str | None,
+        season: int | str | None,
+        episode: int | str | None,
+        db: DatabaseManager | None = None,
+    ) -> int:
+        """
+        File this attempt's stage outcomes against the episode they belong to.
+
+        ``processing_logs`` existed, was read by ``main.py stats`` under
+        "Recent activity", and had no writer anywhere in the repository - so
+        that section was structurally always empty. This is the writer.
+
+        Nothing is written when the episode is not identifiable or has no row
+        yet: ``processing_logs.episode_id`` is a real foreign key now, and a
+        made-up id would be rejected. That is the honest outcome - an attempt
+        that died before the episode was ever persisted has nothing to hang a
+        log off. A season batch calls ``begin_episode`` first, so its episodes
+        always have a row.
+
+        Returns:
+            The number of rows written.
+        """
+        stages, self._pending_stage_logs = self._pending_stage_logs, []
+        if not stages or show is None or season is None or episode is None:
+            return 0
+
+        target = db if db is not None else self.db
+        try:
+            episode_id = target.get_episode_id(show, season, episode)
+            if episode_id is None:
+                logger.debug(
+                    "No episode row for %s S%sE%s yet; %d stage outcome(s) not logged",
+                    show,
+                    season,
+                    episode,
+                    len(stages),
+                )
+                return 0
+            for name, ok, error, wall_seconds in stages:
+                target.log_processing_task(
+                    episode_id=episode_id,
+                    task_type=name,
+                    status="completed" if ok else "failed",
+                    error_message=error,
+                    processing_time=round(wall_seconds, 4),
+                )
+            return len(stages)
+        except Exception as e:  # noqa: BLE001 - never fail a run over an audit trail
+            logger.warning(f"Could not record processing logs: {e}")
+            return 0
+
     async def process_episode(
         self, url: str, show_name: str, run_id: str | None = None
     ) -> dict[str, Any]:
@@ -238,12 +336,18 @@ class WorkflowOrchestrator:
         # Generate unique job identifier for tracking and logging
         job_id = self._job_id(show_name, run_id)
         self.telemetry.start_run(job_id)
+        self._begin_stage_logs()
+
+        # Which episode this attempt is about. Unknown until the summary comes
+        # back - the URL alone does not say - so stage outcomes are buffered
+        # and filed once it is.
+        episode_ref: tuple[str, str, str] | None = None
 
         try:
             # Step 1: Extract and analyze content from the transcript URL
             # This involves web scraping, HTML parsing, and initial content analysis
             logger.info(f"Starting content extraction for {job_id}")
-            with self.telemetry.stage("content_extraction"):
+            with self._stage("content_extraction"):
                 content_result = self.content_agent.extract_and_analyze(url)
 
             # Validate that content extraction was successful
@@ -253,8 +357,14 @@ class WorkflowOrchestrator:
             # Step 2: Generate a structured summary using the AI model
             # Transform raw transcript into YouTube-ready content with plot points
             logger.info("Generating AI summary")
-            with self.telemetry.stage("summarization"):
+            with self._stage("summarization"):
                 summary_result = self.generate_structured_summary(content_result, show_name)
+
+            episode_ref = (
+                summary_result["show"],
+                summary_result["season"],
+                summary_result["episode"],
+            )
 
             # Step 3: (no content quality gate - see note below)
             # There used to be a `qa_agent.validate_content(...)` call here whose
@@ -271,7 +381,7 @@ class WorkflowOrchestrator:
 
             # Step 4: Save the processed data to the database for persistence
             # Store all generated content for future reference and reprocessing
-            with self.telemetry.stage("persistence"):
+            with self._stage("persistence"):
                 self.db.save_episode(
                     summary_result["show"],
                     summary_result["season"],
@@ -314,6 +424,7 @@ class WorkflowOrchestrator:
             self.telemetry.end_run()
             self.telemetry.emit()
             self._record_telemetry(run_id)
+            self._record_processing_logs(*(episode_ref or (None, None, None)))
 
     def generate_structured_summary(
         self, content_result: dict[str, Any], show_name: str
@@ -391,7 +502,7 @@ class WorkflowOrchestrator:
         try:
             if raise_reason is not None:
                 raise raise_reason
-            with self.telemetry.stage("character_enrichment"):
+            with self._stage("character_enrichment"):
                 # Get character analysis for this episode
                 character_analysis = self.character_analysis_agent.analyze_episode_characters(
                     episode_data["show"],
@@ -436,7 +547,7 @@ class WorkflowOrchestrator:
         # Phase 2 Step 2: Adaptive Quality Management
         # Select optimal quality profile based on system resources
         try:
-            with self.telemetry.stage("quality_profile"):
+            with self._stage("quality_profile"):
                 quality_profile = await self.quality_manager.select_quality_profile(
                     context="production",  # Default to production quality
                     deadline=None,  # No deadline pressure for standard processing
@@ -457,7 +568,7 @@ class WorkflowOrchestrator:
             "show": episode_data["show"],
         }
 
-        with self.telemetry.stage("prompt_construction"):
+        with self._stage("prompt_construction"):
             for i, scene in enumerate(enhanced_episode["scenes"]):
                 try:
                     # Build a coherence-enhanced prompt (style + character consistency)
@@ -481,7 +592,7 @@ class WorkflowOrchestrator:
                     )
 
         # Step 4: Create the actual image files using enhanced prompts
-        with self.telemetry.stage("image_generation"):
+        with self._stage("image_generation"):
             create_images(
                 enhanced_prompts,
                 episode_data["episode"],
@@ -490,7 +601,7 @@ class WorkflowOrchestrator:
             )
 
         # Step 5: Generate the audio file from the YouTube transcript
-        with self.telemetry.stage("audio_synthesis"):
+        with self._stage("audio_synthesis"):
             wave_length = wave_file(
                 show=episode_data["show"],
                 season=episode_data["season"],
@@ -511,7 +622,7 @@ class WorkflowOrchestrator:
             logger.info("Using fallback adaptive timing")
 
         # Step 7: Create the final MP4 video file
-        with self.telemetry.stage("video_encode"):
+        with self._stage("video_encode"):
             mp4_file_enhanced(
                 show=episode_data["show"],
                 season=episode_data["season"],
@@ -579,11 +690,12 @@ class WorkflowOrchestrator:
         # Generate unique job identifier for tracking
         job_id = self._job_id(f"{show_name}_S{season}E{episode}", run_id)
         self.telemetry.start_run(job_id)
+        self._begin_stage_logs()
 
         try:
             # Step 1: Use enhanced discovery agent to find the episode URL with search functionality
             logger.info("Discovering episode URL using enhanced search...")
-            with self.telemetry.stage("transcript_discovery"):
+            with self._stage("transcript_discovery"):
                 discovery_result = self.discovery_agent.search_episode_enhanced(
                     show_name, season, episode, episode_title
                 )
@@ -603,7 +715,7 @@ class WorkflowOrchestrator:
 
             # Step 2: Use transcript agent to parse the discovered URL
             logger.info("Parsing transcript content from discovered URL...")
-            with self.telemetry.stage("transcript_parse"):
+            with self._stage("transcript_parse"):
                 transcript_result = self.transcript_agent.parse_discovered_url(
                     discovered_url, discovery_result["source"]
                 )
@@ -631,7 +743,7 @@ class WorkflowOrchestrator:
 
             # Step 3: Generate structured summary
             logger.info("Generating AI summary...")
-            with self.telemetry.stage("summarization"):
+            with self._stage("summarization"):
                 summary_result = self.generate_structured_summary(content_result, show_name)
 
             # Ensure episode info is correctly set
@@ -647,7 +759,7 @@ class WorkflowOrchestrator:
 
             # Step 5: Save to database
             db_instance = db or self.db
-            with self.telemetry.stage("persistence"):
+            with self._stage("persistence"):
                 db_instance.save_episode(
                     summary_result["show"],
                     summary_result["season"],
@@ -680,6 +792,11 @@ class WorkflowOrchestrator:
             self.telemetry.end_run()
             self.telemetry.emit()
             self._record_telemetry(run_id)
+            # This entry point knows the episode from its arguments, so the
+            # audit trail survives a failure at any stage - including one
+            # before the episode was ever persisted, as long as the season
+            # batch's `begin_episode` created the row.
+            self._record_processing_logs(show_name, season, episode, db or self.db)
 
     async def process_episode_from_url(
         self,
@@ -709,11 +826,16 @@ class WorkflowOrchestrator:
         # Generate unique job identifier for tracking
         job_id = self._job_id(f"{show_name}_URL", run_id)
         self.telemetry.start_run(job_id)
+        self._begin_stage_logs()
+
+        # As in `process_episode`: the URL does not name the episode, so the
+        # reference is only known once the summary comes back.
+        episode_ref: tuple[str, str, str] | None = None
 
         try:
             # Step 1: Extract and analyze content from the provided URL
             logger.info("Extracting content from URL...")
-            with self.telemetry.stage("content_extraction"):
+            with self._stage("content_extraction"):
                 content_result = self.content_agent.extract_and_analyze(url)
 
             # Validate that content extraction was successful
@@ -724,8 +846,14 @@ class WorkflowOrchestrator:
 
             # Step 2: Generate structured summary
             logger.info("Generating AI summary...")
-            with self.telemetry.stage("summarization"):
+            with self._stage("summarization"):
                 summary_result = self.generate_structured_summary(content_result, show_name)
+
+            episode_ref = (
+                summary_result["show"],
+                summary_result["season"],
+                summary_result["episode"],
+            )
 
             # Step 3: (no content quality gate - the discarded
             # `qa_agent.validate_content(...)` call that used to sit here was
@@ -735,7 +863,7 @@ class WorkflowOrchestrator:
 
             # Step 4: Save to database
             db_instance = db or self.db
-            with self.telemetry.stage("persistence"):
+            with self._stage("persistence"):
                 db_instance.save_episode(
                     summary_result["show"],
                     summary_result["season"],
@@ -761,3 +889,4 @@ class WorkflowOrchestrator:
             self.telemetry.end_run()
             self.telemetry.emit()
             self._record_telemetry(run_id)
+            self._record_processing_logs(*(episode_ref or (None, None, None)), db or self.db)
