@@ -4,9 +4,6 @@ Test suite for the Anime Video Generator modular architecture.
 This package contains comprehensive tests for all agents and system components.
 """
 
-__version__ = "1.0.0"
-__author__ = "Anime Video Generator Team"
-
 # Test categories
 AGENT_TESTS = [
     "test_transcript_agent",

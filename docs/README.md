@@ -24,6 +24,7 @@ the code as it was.
 | File | What it is |
 |---|---|
 | **[adr/](adr/)** | Six architecture decision records, extracted from the commit messages where the reasoning was argued. Each names its commits and states the cost that was accepted. [ADR 0006](adr/0006-async-unresolved.md) is **open**, not decided. |
+| **[releasing.md](releasing.md)** | What the version number means for a project with no consumers, when to bump, the deprecation regime, and why the changelog is hand-written. |
 
 ## Quality gates
 

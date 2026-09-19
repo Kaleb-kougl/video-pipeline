@@ -158,6 +158,24 @@ documentation programmes fail:
 - **A published site as the goal.** A docs site is a distribution mechanism. If
   Phase 1 is skipped, it distributes the wrong thing faster.
 
+## Audience: decided
+
+**This is a portfolio piece.** Recorded 2026-09-19. That resolves the question
+below, and changes two things:
+
+- **Phase 4, the MkDocs reference site, is not being built.** A reviewer
+  spending ten minutes reads the README and browses the repo; a generated API
+  reference is not where they look. Building it would be work that photographs
+  well and changes nothing about how this repo is assessed. The 176 docstrings
+  it would render are already good, and they are read in the editor, where they
+  are used. Revisit only if this becomes a consumed library.
+- **Phase 3 was the right place to spend the effort.** Operational thinking is
+  the staff-level signal, and writing the runbook found a bug that made every
+  CLI subcommand fail whenever an optional dependency was absent (`541e86a`).
+
+Phases 1, 2, 3 and 5 are done. The original question is kept below for its
+reasoning.
+
 ## Open question for the owner
 
 Who is the audience? The answer changes Phases 2–4 materially:
