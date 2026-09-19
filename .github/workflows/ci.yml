@@ -76,3 +76,10 @@ jobs:
           HF_HUB_OFFLINE: "1"
           TRANSFORMERS_OFFLINE: "1"
         run: .venv/bin/python -m pytest
+
+      # The eval gate is the regression signal for prompt changes: it fails the
+      # build if the aggregate score drops, if any single case regresses, or if
+      # the prompt stops issuing the instructions the rubric grades.
+      # Offline mode replays committed fixtures - no API key, no network.
+      - name: Run eval gate
+        run: .venv/bin/python evals/run_eval.py

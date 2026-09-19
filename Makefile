@@ -2,7 +2,7 @@ PYTHON ?= python3
 VENV   ?= .venv
 BIN    := $(VENV)/bin
 
-.PHONY: help demo install install-demo test lint format typecheck docker-demo clean-demo
+.PHONY: help demo install install-demo test lint format typecheck eval eval-live docker-demo clean-demo
 
 .DEFAULT_GOAL := help
 
@@ -69,6 +69,16 @@ format:  ## Apply autofixes and reformat
 
 typecheck:  ## Type check the strictly-typed packages (core.* only, for now)
 	$(BIN)/python -m mypy --no-incremental core
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+
+eval: $(BIN)/python  ## Score the generation prompt offline against the golden set
+	$(BIN)/python evals/run_eval.py
+
+eval-live: $(BIN)/python  ## Same rubric against real Gemini (needs GOOGLE_API_KEY)
+	$(BIN)/python evals/run_eval.py --mode live --judge
 
 # ---------------------------------------------------------------------------
 # Container
