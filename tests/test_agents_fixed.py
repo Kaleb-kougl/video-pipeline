@@ -52,8 +52,8 @@ def test_episode_discovery_agent():
         print(f"✅ validate_episode_url('https://example.com') = {is_valid}")
         
         # Test discover_episode_url
-        discovered_url = agent.discover_episode_url(1, 4, ["Start Line"])
-        print(f"✅ discover_episode_url(1, 4, ['Start Line']) = {discovered_url}")
+        discovered_url = agent.discover_episode_url("My Hero Academia", 1, 4, ["Start Line"])
+        print(f"✅ discover_episode_url('My Hero Academia', 1, 4, ['Start Line']) = {discovered_url}")
         
         print("✅ EpisodeDiscoveryAgent: ALL TESTS PASSED")
         return True

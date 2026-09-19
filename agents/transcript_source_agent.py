@@ -39,6 +39,17 @@ class TranscriptSourceDiscoveryAgent:
     database of transcript sources for different shows.
     """
 
+    #: Source families that are referenced by ``known_source_patterns`` /
+    #: ``reliability_indicators`` but that this agent has no client for. They are
+    #: never queried directly, so callers must not read their absence from a
+    #: discovery result as "checked and nothing found".
+    UNSEARCHED_SOURCES = (
+        "MyAnimeList",
+        "AniDB",
+        "Anime News Network",
+        "Crunchyroll",
+    )
+
     def __init__(self):
         """
         Initialize the transcript source discovery agent.
@@ -46,6 +57,10 @@ class TranscriptSourceDiscoveryAgent:
         Sets up known source patterns, reliability indicators, search engines,
         and rate limiting configuration for transcript source discovery and evaluation.
         """
+        # Only "fandom_wikis" and "transcript_databases" are crawled directly by
+        # _search_known_patterns(). "community_sites" and "streaming_platforms" are
+        # reference data: they document domains that web-search results are
+        # classified against, they are not themselves searched.
         self.known_source_patterns = {
             "fandom_wikis": [
                 "https://{}.fandom.com",
@@ -116,8 +131,15 @@ class TranscriptSourceDiscoveryAgent:
         """
         Discover transcript sources for a specific show.
 
-        Searches known source patterns, performs web searches, checks anime-specific
-        sources, evaluates and deduplicates results, then sorts by reliability.
+        Searches the source families this agent actually implements - Fandom-style
+        wikis and the known transcript databases - plus a general web search, then
+        evaluates, deduplicates and sorts the results by reliability.
+
+        The dedicated anime catalogue sites in ``UNSEARCHED_SOURCES`` (MyAnimeList,
+        AniDB, Anime News Network, Crunchyroll) are **not** queried: no client for
+        them exists. Their absence from the returned list therefore means "not
+        checked", not "checked and found nothing". They can still turn up
+        indirectly if the web search surfaces one of their pages.
 
         Args:
             show_name (str): Name of the show to search for
@@ -138,17 +160,16 @@ class TranscriptSourceDiscoveryAgent:
         search_sources = self._perform_web_search(show_name, season)
         sources.extend(search_sources)
 
-        # 3. Check specialized anime transcript sources
-        anime_sources = self._search_anime_specific_sources(show_name, season)
-        sources.extend(anime_sources)
-
-        # 4. Evaluate and deduplicate sources
+        # 3. Evaluate and deduplicate sources
         evaluated_sources = self._evaluate_and_deduplicate(sources)
 
-        # 5. Sort by reliability score
+        # 4. Sort by reliability score
         evaluated_sources.sort(key=lambda x: x.reliability_score, reverse=True)
 
-        logger.info(f"Found {len(evaluated_sources)} transcript sources for {show_name}")
+        logger.info(
+            f"Found {len(evaluated_sources)} transcript sources for {show_name} "
+            f"(not searched: {', '.join(self.UNSEARCHED_SOURCES)})"
+        )
         return evaluated_sources
 
     def _search_known_patterns(self, show_name: str, season: int = None) -> list[TranscriptSource]:
@@ -234,34 +255,6 @@ class TranscriptSourceDiscoveryAgent:
             except Exception as e:
                 logger.warning(f"Web search failed for query '{query}': {e}")
                 continue
-
-        return sources
-
-    def _search_anime_specific_sources(
-        self, show_name: str, season: int = None
-    ) -> list[TranscriptSource]:
-        """Search anime-specific transcript sources."""
-        sources = []
-
-        # Check MyAnimeList
-        mal_source = self._check_myanimelist(show_name, season)
-        if mal_source:
-            sources.append(mal_source)
-
-        # Check AniDB
-        anidb_source = self._check_anidb(show_name, season)
-        if anidb_source:
-            sources.append(anidb_source)
-
-        # Check Anime News Network
-        ann_source = self._check_anime_news_network(show_name, season)
-        if ann_source:
-            sources.append(ann_source)
-
-        # Check Crunchyroll (for subtitle/transcript data)
-        cr_source = self._check_crunchyroll(show_name, season)
-        if cr_source:
-            sources.append(cr_source)
 
         return sources
 
@@ -494,29 +487,6 @@ class TranscriptSourceDiscoveryAgent:
         except Exception as e:
             logger.debug(f"Failed to analyze potential source {url}: {e}")
             return None
-
-    def _check_myanimelist(self, show_name: str, season: int = None) -> TranscriptSource | None:
-        """Check MyAnimeList for transcript information."""
-        # Implementation for MAL-specific search
-        # This would involve searching MAL's database and checking for episode guides
-        return None  # Placeholder
-
-    def _check_anidb(self, show_name: str, season: int = None) -> TranscriptSource | None:
-        """Check AniDB for transcript information."""
-        # Implementation for AniDB-specific search
-        return None  # Placeholder
-
-    def _check_anime_news_network(
-        self, show_name: str, season: int = None
-    ) -> TranscriptSource | None:
-        """Check Anime News Network for transcript information."""
-        # Implementation for ANN-specific search
-        return None  # Placeholder
-
-    def _check_crunchyroll(self, show_name: str, season: int = None) -> TranscriptSource | None:
-        """Check Crunchyroll for subtitle/transcript data."""
-        # Implementation for Crunchyroll-specific search
-        return None  # Placeholder
 
     def _evaluate_and_deduplicate(self, sources: list[TranscriptSource]) -> list[TranscriptSource]:
         """Remove duplicates and improve source evaluation."""

@@ -136,7 +136,10 @@ class EpisodeDiscoveryAgent:
         self.retry_count = 3
         self.delay_range = (1, 3)
 
-        # Legacy support - keep base URL for compatibility
+        # Legacy support - keep base URL for compatibility.
+        # NOTE: this URL points at one specific series, so any URL built from it
+        # is only meaningful for that show (see `legacy_show_name`).
+        self.legacy_show_name = "My Hero Academia"
         self.base_url = "https://subslikescript.com/series/My_Hero_Academia-5626028"
 
         # Dictionary of common episode naming patterns for URL construction
@@ -604,13 +607,38 @@ class EpisodeDiscoveryAgent:
         # Return False if any error occurs or content is not found
         return False
 
+    def is_legacy_show(self, show_name: str) -> bool:
+        """
+        Report whether `show_name` refers to the series that `self.base_url` points at.
+
+        The legacy URL builders (`generate_episode_url`) interpolate season/episode
+        numbers into `self.base_url`, which is hardcoded to a single series. Applying
+        them to any other show produces a URL that validates successfully but serves
+        the wrong show's transcript, so callers must gate on this check.
+
+        Args:
+            show_name (str): Show name to compare against the legacy series
+
+        Returns:
+            bool: True if the name (or a known alias) matches the legacy series
+        """
+        candidate = show_name.strip().lower()
+        if candidate == self.legacy_show_name.lower():
+            return True
+        return candidate in self.show_mappings.get(self.legacy_show_name, [])
+
     def discover_episode_url(
-        self, season: int, episode: int, possible_titles: list[str] | None = None
+        self,
+        show_name: str,
+        season: int,
+        episode: int,
+        possible_titles: list[str] | None = None,
     ) -> str | None:
         """
         Enhanced episode URL discovery using search functionality with fallback to legacy methods.
 
         Args:
+            show_name (str): Name of the show to discover the episode for
             season (int): Season number to search for
             episode (int): Episode number within the season
             possible_titles (list, optional): List of possible episode titles to try
@@ -618,8 +646,6 @@ class EpisodeDiscoveryAgent:
         Returns:
             str or None: Valid episode URL if found, None if no valid URL discovered
         """
-        # Try enhanced search first (for My Hero Academia, use hardcoded show name)
-        show_name = "My Hero Academia"  # Default for legacy compatibility
         episode_title = possible_titles[0] if possible_titles else None
 
         # Method 1: Enhanced search across multiple sources
@@ -628,7 +654,15 @@ class EpisodeDiscoveryAgent:
             logger.info(f"✅ Found via enhanced search: {search_result['url']}")
             return search_result["url"]
 
-        # Method 2: Legacy direct URL generation (fallback)
+        # Method 2: Legacy direct URL generation (fallback).
+        # Only safe for the single series self.base_url points at.
+        if not self.is_legacy_show(show_name):
+            logger.warning(
+                f"❌ Could not find valid URL for {show_name} Season {season}, Episode {episode} "
+                f"(legacy URL patterns only cover {self.legacy_show_name})"
+            )
+            return None
+
         logger.info("Enhanced search failed, trying legacy methods...")
 
         # First attempt: Try the simplest pattern without episode title
@@ -655,6 +689,9 @@ class EpisodeDiscoveryAgent:
         """
         Discover episode URL for any show using enhanced search functionality.
 
+        Kept as a named entry point; `discover_episode_url` does the work and now
+        takes the show name too, so the two are the same call.
+
         Args:
             show_name (str): Name of the show
             season (int): Season number to search for
@@ -664,18 +701,7 @@ class EpisodeDiscoveryAgent:
         Returns:
             str or None: Valid episode URL if found, None if no valid URL discovered
         """
-        episode_title = possible_titles[0] if possible_titles else None
-
-        # Use enhanced search functionality
-        search_result = self.search_episode_enhanced(show_name, season, episode, episode_title)
-        if search_result and search_result.get("url"):
-            logger.info(
-                f"✅ Found {show_name} S{season}E{episode} via search: {search_result['url']}"
-            )
-            return search_result["url"]
-
-        logger.warning(f"❌ Could not find URL for {show_name} Season {season}, Episode {episode}")
-        return None
+        return self.discover_episode_url(show_name, season, episode, possible_titles)
 
     def discover_all_episodes(self, show_name: str) -> list[dict]:
         """

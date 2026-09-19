@@ -34,14 +34,38 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Titles that transcripts put in front of a speaker's name ("Mr. Aizawa:").
+_TITLE_PREFIX_RE = re.compile(
+    r"^(?:mr|mrs|ms|miss|dr|prof|professor|principal|teacher|student|sir)\.?\s+",
+    re.IGNORECASE,
+)
+
+# Japanese honorifics appended to a speaker's name ("Iida-kun:", "All Might sensei:").
+# A separator is required so that ordinary names ("Susan", "Chandra") survive intact.
+_HONORIFIC_SUFFIX_RE = re.compile(
+    r"[\s\-](?:san|kun|chan|sama|senpai|sempai|sensei|dono)\.?$",
+    re.IGNORECASE,
+)
+
+# Characters a plausible speaker name may consist of.
+_NAME_CHARSET_RE = re.compile(r"^[A-Za-z\s\-'\.]+$")
+
 
 @dataclass
 class CharacterProfile:
     """Represents a character's profile with vector embeddings."""
 
     name: str
-    canonical_name: str  # Standardized name (e.g., "Midoriya Izuku" instead of "Deku")
-    aliases: list[str]  # Alternative names/nicknames
+    # Normalized spelling of `name`: case/whitespace regularized, speaker titles
+    # and Japanese honorifics removed ("IIDA-kun " -> "Iida"). This is a
+    # *surface-form* canonicalization only. Resolving nicknames to a franchise
+    # identity ("Deku" -> "Izuku Midoriya") needs a per-show character registry,
+    # which this pipeline does not have; see core/show_registry.py for the
+    # equivalent that only exists for show names.
+    canonical_name: str
+    # Other surface forms of this character observed in the same transcript
+    # (e.g. ["Iida-Kun", "Iida Sensei"]). Empty when only one spelling was seen.
+    aliases: list[str]
     dialogue_chunks: list[str]  # Character's dialogue excerpts
     personality_traits: list[str]  # Extracted personality traits
     relationships: dict[str, float]  # Character relationships with similarity scores
@@ -152,6 +176,10 @@ class CharacterAnalysisAgent:
             "SLAYER",
         }
 
+        # Case-folded lookup for the above: canonical names are title cased, the
+        # list above is upper case, so a direct `in` test would never match.
+        self._false_positives_folded = {fp.casefold() for fp in self.false_positives}
+
         # Personality trait keywords for analysis
         self.personality_keywords = {
             "determined": ["determined", "persistent", "never give up", "won't quit"],
@@ -223,14 +251,21 @@ class CharacterAnalysisAgent:
         episode_key = f"{show_name}_S{season}E{episode}"
         logger.info(f"Analyzing characters for {episode_key}")
 
-        # Extract character dialogues
-        character_dialogues = self._extract_character_dialogues(transcript)
+        # Extract character dialogues, grouped under canonical character names
+        character_dialogues, character_aliases = self._extract_character_dialogues_with_aliases(
+            transcript
+        )
 
         # Create character profiles
         character_profiles = {}
         for char_name, dialogues in character_dialogues.items():
             profile = self._create_character_profile(
-                char_name, dialogues, show_name, season, episode
+                char_name,
+                dialogues,
+                show_name,
+                season,
+                episode,
+                aliases=character_aliases.get(char_name),
             )
             character_profiles[char_name] = profile
 
@@ -254,18 +289,22 @@ class CharacterAnalysisAgent:
         )
         return character_profiles
 
-    def _extract_character_dialogues(self, transcript: str) -> dict[str, list[str]]:
+    def _extract_character_dialogues_with_aliases(
+        self, transcript: str
+    ) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
         """
-        Extract dialogue by character from transcript.
+        Extract dialogue by character, grouped under each character's canonical name.
 
-        Parses the transcript to identify character names and their associated
-        dialogue lines, filtering out false positives and cleaning character names.
+        Parses the transcript to identify speakers and their dialogue, canonicalizes
+        every speaker label, merges the labels that canonicalize to the same name
+        (so "Iida:", "IIDA:" and "Iida-kun:" are one character) and records the
+        alternative spellings that were folded in.
 
         Args:
             transcript (str): Raw episode transcript text
 
         Returns:
-            Dict[str, List[str]]: Dictionary mapping character names to their dialogue lines
+            tuple: (canonical name -> dialogue lines, canonical name -> alias spellings)
         """
         character_dialogues = defaultdict(list)
 
@@ -302,51 +341,127 @@ class CharacterAnalysisAgent:
             if len(dialogue_text) > 10:
                 character_dialogues[current_speaker].append(dialogue_text)
 
-        # Filter out false positives and clean names
-        cleaned_dialogues = {}
+        # Canonicalize speaker labels, drop false positives and merge the labels
+        # that denote the same character.
+        cleaned_dialogues: dict[str, list[str]] = {}
+        alias_forms: dict[str, set[str]] = defaultdict(set)
         for char_name, dialogues in character_dialogues.items():
-            cleaned_name = self._clean_character_name(char_name)
-            if cleaned_name and cleaned_name not in self.false_positives:
-                cleaned_dialogues[cleaned_name] = dialogues
+            canonical = self._canonicalize_character_name(char_name)
+            if not canonical or self._is_false_positive(canonical):
+                continue
+            # Merge rather than overwrite: several raw labels can share a canonical name.
+            cleaned_dialogues.setdefault(canonical, []).extend(dialogues)
 
-        return cleaned_dialogues
+            surface = self._surface_form(char_name)
+            if surface and surface != canonical:
+                alias_forms[canonical].add(surface)
 
-    def _clean_character_name(self, name: str) -> str | None:
+        aliases = {name: sorted(forms) for name, forms in alias_forms.items()}
+        return cleaned_dialogues, aliases
+
+    def _canonicalize_character_name(self, name: str) -> str | None:
         """
-        Clean and standardize character names.
+        Reduce a raw speaker label to a canonical surface form.
 
-        Removes brackets, parentheses, titles, and validates that the name
-        is likely a character name rather than a stage direction.
+        Drops bracketed stage directions, collapses whitespace, removes a leading
+        title ("Mr.", "Professor") and any trailing Japanese honorific ("-kun",
+        " sensei"), then normalizes capitalization. Two labels that denote the same
+        character with different decoration collapse to the same string.
+
+        This does *not* resolve nicknames to a character's real name: that needs a
+        per-show character registry the pipeline does not have.
 
         Args:
-            name (str): Raw character name to clean
+            name (str): Raw character name to canonicalize
 
         Returns:
-            Optional[str]: Cleaned character name or None if invalid
+            Optional[str]: Canonical character name or None if it is not a plausible name
         """
         if not name:
             return None
 
-        # Remove common prefixes/suffixes
-        name = re.sub(r"\(.*?\)", "", name).strip()
-        name = re.sub(r"\[.*?\]", "", name).strip()
+        # Remove bracketed stage directions and collapse whitespace
+        name = re.sub(r"\(.*?\)", " ", name)
+        name = re.sub(r"\[.*?\]", " ", name)
+        name = re.sub(r"\s+", " ", name).strip()
 
-        # Remove titles
-        name = re.sub(r"^(Mr|Mrs|Dr|Professor|Principal|Teacher|Student)\s+", "", name)
+        # Remove a leading title
+        name = _TITLE_PREFIX_RE.sub("", name).strip()
+
+        # Remove trailing honorifics (possibly stacked), but never everything
+        while True:
+            shortened = _HONORIFIC_SUFFIX_RE.sub("", name).strip()
+            if shortened == name or not shortened:
+                break
+            name = shortened
+
+        name = name.strip(" .-'")
 
         # Check if it's likely a character name
         if len(name) < 2 or len(name) > 50:
             return None
 
-        if not re.match(r"^[A-Za-z\s\-\'\.]+$", name):
+        if not _NAME_CHARSET_RE.match(name):
             return None
 
         return name.title()
 
+    def _surface_form(self, name: str) -> str:
+        """
+        Normalize a raw speaker label just enough to display it as an alias.
+
+        Unlike :meth:`_canonicalize_character_name` this keeps titles and
+        honorifics, so the caller can record which spellings were actually used.
+
+        Args:
+            name (str): Raw character name as it appeared in the transcript
+
+        Returns:
+            str: Tidied spelling ("" if nothing usable remains)
+        """
+        surface = re.sub(r"\(.*?\)", " ", name)
+        surface = re.sub(r"\[.*?\]", " ", surface)
+        surface = re.sub(r"\s+", " ", surface).strip(" .-'")
+        return surface.title()
+
+    def _is_false_positive(self, name: str) -> bool:
+        """
+        Report whether a canonical name is a known non-character label.
+
+        The false-positive list is written in upper case while canonical names are
+        title cased, so the comparison has to ignore case.
+
+        Args:
+            name (str): Canonical character name
+
+        Returns:
+            bool: True if the name is a stage direction / show title fragment
+        """
+        return name.casefold() in self._false_positives_folded
+
     def _create_character_profile(
-        self, name: str, dialogues: list[str], show_name: str, season: int, episode: int
+        self,
+        name: str,
+        dialogues: list[str],
+        show_name: str,
+        season: int,
+        episode: int,
+        aliases: list[str] | None = None,
     ) -> CharacterProfile:
-        """Create a character profile from their dialogues."""
+        """
+        Create a character profile from their dialogues.
+
+        Args:
+            name (str): Character name (canonical if it came from extraction)
+            dialogues (list[str]): The character's dialogue lines
+            show_name (str): Show the episode belongs to
+            season (int): Season number
+            episode (int): Episode number
+            aliases (list[str], optional): Other spellings seen for this character
+
+        Returns:
+            CharacterProfile: Profile with canonical name, aliases and traits
+        """
         # Combine all dialogues for analysis
         all_dialogue = " ".join(dialogues)
 
@@ -362,8 +477,8 @@ class CharacterAnalysisAgent:
 
         return CharacterProfile(
             name=name,
-            canonical_name=name,  # TODO: Implement name standardization
-            aliases=[],  # TODO: Detect aliases
+            canonical_name=self._canonicalize_character_name(name) or name,
+            aliases=sorted(set(aliases)) if aliases else [],
             dialogue_chunks=dialogues,
             personality_traits=personality_traits,
             relationships={},
@@ -415,8 +530,8 @@ class CharacterAnalysisAgent:
             # Check if line has character dialogue
             dialogue_match = self.character_patterns[0].match(line)
             if dialogue_match:
-                char_name = self._clean_character_name(dialogue_match.group(1))
-                if char_name and char_name not in self.false_positives:
+                char_name = self._canonicalize_character_name(dialogue_match.group(1))
+                if char_name and not self._is_false_positive(char_name):
                     if char_name not in scene_characters:
                         scene_characters.append(char_name)
 
