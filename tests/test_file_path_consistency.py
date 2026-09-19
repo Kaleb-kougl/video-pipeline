@@ -2,393 +2,158 @@
 """
 Regression tests for file path consistency in media generation.
 
-This test suite validates that file path construction is consistent between
-image generation and video creation functions, preventing issues where
-videos look for images that don't exist due to path mismatches.
+``create_image`` writes a slide, ``wave_file`` writes the narration and
+``mp4_file_enhanced`` reads both back to assemble the video. The three build
+their paths independently, so a change to one naming scheme silently produces a
+video that looks for images that were never written there. These tests pin the
+shared layout:
+
+    {show}/Season{season}/Episode{episode}/{show}_{episode}_{index}.png
+    {show}/Season{season}/Episode{episode}/{show}_{episode}.wav
+
+This module used to be a single ``test_file_path_consistency()`` that wrapped
+five checks in ``try/except``, printed a tick or a cross, and *returned* a bool.
+pytest ignores a return value, so the module reported as one passing test while
+four of its five checks were failing. Those four failures were artifacts of the
+mocks, not product faults: the module patched ``media.media_utils.Image`` while
+``create_placeholder_image`` still used the real ``PIL.ImageDraw``, so
+``draw.textbbox(...)[2]`` raised ``'Mock' object is not subscriptable`` (or
+``'>' not supported between MagicMock and int``) before any path was recorded.
+
+The checks below no longer mock PIL, ``wave`` or ``os.makedirs`` at all. They
+run inside ``tmp_path`` and assert against the files that actually land on
+disk, which is the only thing the video assembly step cares about. Only MoviePy
+is stubbed, so the video does not have to be rendered to learn which paths it
+asks for.
 """
 
 import sys
 import unittest.mock as mock
 from pathlib import Path
 
+import pytest
+
 # Add the project root to Python path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+SHOW = "Test Show"
+SEASON = "1"
 
-def test_file_path_consistency():
-    """Test that file paths are consistent between media generation functions.
 
-    This test validates that:
-    1. Image generation saves files to predictable paths
-    2. Video creation looks for images at the same paths
-    3. Season-level processing uses consistent path patterns
-    4. Episode-level processing uses consistent path patterns
+def episode_dir(episode: str) -> Path:
+    return Path(SHOW) / f"Season{SEASON}" / f"Episode{episode}"
 
-    Returns:
-        bool: True if all tests pass, False otherwise
+
+@pytest.fixture
+def in_tmp_cwd(tmp_path, monkeypatch):
+    """Media paths are relative to the working directory, so move into tmp."""
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+@pytest.fixture
+def no_api_key(monkeypatch):
+    """Force the offline path: placeholder images and silent narration."""
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+
+@pytest.fixture
+def captured_video_paths():
+    """Stub MoviePy and record every image path the assembly step opens."""
+    paths: list[str] = []
+
+    def record(path):
+        paths.append(path)
+        return mock.Mock()
+
+    with (
+        mock.patch("media.media_utils.ImageClip", side_effect=record),
+        mock.patch("media.media_utils.VideoFileClip"),
+        mock.patch("media.media_utils.AudioFileClip"),
+        mock.patch("media.media_utils.concatenate_videoclips"),
+    ):
+        yield paths
+
+
+@pytest.mark.parametrize(
+    ("episode", "label"),
+    [("1", "episode"), ("Season_1", "season summary")],
+    ids=["episode-level", "season-level"],
+)
+def test_the_video_reads_the_images_that_were_written(
+    in_tmp_cwd, no_api_key, captured_video_paths, episode, label
+):
+    """The path ``create_image`` writes is the path ``mp4_file_enhanced`` opens.
+
+    Season summaries reuse the same functions with ``episode="Season_1"``, so
+    both shapes are checked.
     """
+    from media.media_utils import create_image, mp4_file_enhanced, wave_file
 
-    print("🧪 Testing File Path Consistency in Media Generation")
-    print("=" * 60)
-
-    success_count = 0
-    total_tests = 0
-
-    # Test 1: Episode-level path consistency
-    print("\n1️⃣ Testing Episode-level Path Consistency")
-    total_tests += 1
-
-    try:
-        # Mock all the external dependencies
-        with mock.patch("media.media_utils.genai"):
-            with mock.patch("media.media_utils.types"):
-                with mock.patch("media.media_utils.Image"):
-                    with mock.patch("media.media_utils.os.makedirs"):
-                        with mock.patch("media.media_utils.ImageClip"):
-                            with mock.patch("media.media_utils.VideoFileClip"):
-                                with mock.patch("media.media_utils.AudioFileClip"):
-                                    # Test parameters
-                                    show = "Test Show"
-                                    season = "1"
-                                    episode = "1"
-
-                                    # Capture the path used by create_image
-                                    saved_paths = []
-
-                                    def mock_save(path):
-                                        saved_paths.append(path)
-
-                                    mock_image = mock.Mock()
-                                    mock_image.save = mock_save
-
-                                    with mock.patch(
-                                        "media.media_utils.Image.new", return_value=mock_image
-                                    ):
-                                        from media.media_utils import (
-                                            create_image,
-                                            mp4_file_enhanced,
-                                        )
-
-                                        # Generate an image
-                                        create_image("test prompt", episode, season, show, 0)
-
-                                        # Check the saved path
-                                        expected_image_path = f"{show}/Season{season}/Episode{episode}/{show}_{episode}_0.png"
-
-                                        assert len(saved_paths) > 0, "No image was saved"
-                                        actual_path = saved_paths[0]
-
-                                        assert actual_path == expected_image_path, (
-                                            f"Image saved to {actual_path}, expected {expected_image_path}"
-                                        )
-
-                                        # Now test if mp4_file_enhanced looks for images at the same path
-                                        captured_image_paths = []
-
-                                        def mock_image_clip(path):
-                                            captured_image_paths.append(path)
-                                            return mock.Mock()
-
-                                        with mock.patch(
-                                            "media.media_utils.ImageClip",
-                                            side_effect=mock_image_clip,
-                                        ):
-                                            # This should look for images at the same paths
-                                            sentences = ["test sentence"]
-                                            durations = [1.0]
-                                            mp4_file_enhanced(
-                                                show, season, episode, sentences, durations
-                                            )
-
-                                            # Verify the video function looks for images at correct paths
-                                            assert len(captured_image_paths) > 0, (
-                                                "No image paths were used"
-                                            )
-                                            video_image_path = captured_image_paths[0]
-
-                                            assert video_image_path == expected_image_path, (
-                                                f"Video looks for {video_image_path}, but image saved to {actual_path}"
-                                            )
-
-                                        print(
-                                            "    ✅ Episode-level paths are consistent between image generation and video creation"
-                                        )
-                                        success_count += 1
-
-    except Exception as e:
-        print(f"    ❌ Episode-level path consistency test failed: {e}")
-
-    # Test 2: Season-level path consistency
-    print("\n2️⃣ Testing Season-level Path Consistency")
-    total_tests += 1
-
-    try:
-        with mock.patch("media.media_utils.genai"):
-            with mock.patch("media.media_utils.types"):
-                with mock.patch("media.media_utils.Image"):
-                    with mock.patch("media.media_utils.os.makedirs"):
-                        with mock.patch("media.media_utils.ImageClip"):
-                            with mock.patch("media.media_utils.VideoFileClip"):
-                                with mock.patch("media.media_utils.AudioFileClip"):
-                                    # Test parameters for season summary
-                                    show = "Test Show"
-                                    season = "1"
-                                    episode = "Season_1"  # This is how season summaries work
-
-                                    saved_paths = []
-
-                                    def mock_save(path):
-                                        saved_paths.append(path)
-
-                                    mock_image = mock.Mock()
-                                    mock_image.save = mock_save
-
-                                    with mock.patch(
-                                        "media.media_utils.Image.new", return_value=mock_image
-                                    ):
-                                        from media.media_utils import (
-                                            create_image,
-                                            mp4_file_enhanced,
-                                        )
-
-                                        # Generate an image for season summary
-                                        create_image("test season prompt", episode, season, show, 0)
-
-                                        # Check the saved path
-                                        expected_image_path = f"{show}/Season{season}/Episode{episode}/{show}_{episode}_0.png"
-
-                                        assert len(saved_paths) > 0, "No season image was saved"
-                                        actual_path = saved_paths[0]
-
-                                        assert actual_path == expected_image_path, (
-                                            f"Season image saved to {actual_path}, expected {expected_image_path}"
-                                        )
-
-                                        # Test video creation for season summary
-                                        captured_image_paths = []
-
-                                        def mock_image_clip(path):
-                                            captured_image_paths.append(path)
-                                            return mock.Mock()
-
-                                        with mock.patch(
-                                            "media.media_utils.ImageClip",
-                                            side_effect=mock_image_clip,
-                                        ):
-                                            sentences = ["season summary sentence"]
-                                            durations = [5.0]
-                                            mp4_file_enhanced(
-                                                show, season, episode, sentences, durations
-                                            )
-
-                                            assert len(captured_image_paths) > 0, (
-                                                "No season image paths were used"
-                                            )
-                                            video_image_path = captured_image_paths[0]
-
-                                            assert video_image_path == expected_image_path, (
-                                                f"Season video looks for {video_image_path}, but image saved to {actual_path}"
-                                            )
-
-                                        print(
-                                            "    ✅ Season-level paths are consistent between image generation and video creation"
-                                        )
-                                        success_count += 1
-
-    except Exception as e:
-        print(f"    ❌ Season-level path consistency test failed: {e}")
-
-    # Test 3: Path parameter order consistency
-    print("\n3️⃣ Testing Path Parameter Order Consistency")
-    total_tests += 1
-
-    try:
-        # Test that create_images function calls create_image with correct parameter order
-        with mock.patch("media.media_utils.create_image") as mock_create_image:
-            from media.media_utils import create_images
-
-            # Test parameters
-            sentences = ["sentence 1", "sentence 2"]
-            episode = "1"
-            season = "1"
-            show = "Test Show"
-
-            # Call create_images
-            create_images(sentences, episode, season, show)
-
-            # Verify create_image was called with correct parameter order
-            assert mock_create_image.call_count == 2, "Should call create_image for each sentence"
-
-            # Check first call
-            first_call = mock_create_image.call_args_list[0]
-            expected_args = ("sentence 1", episode, season, show, 0)
-            actual_args = first_call[0]
-
-            assert actual_args == expected_args, (
-                f"First call args: {actual_args}, expected: {expected_args}"
-            )
-
-            # Check second call
-            second_call = mock_create_image.call_args_list[1]
-            expected_args = ("sentence 2", episode, season, show, 1)
-            actual_args = second_call[0]
-
-            assert actual_args == expected_args, (
-                f"Second call args: {actual_args}, expected: {expected_args}"
-            )
-
-            print("    ✅ Parameter order is consistent in create_images function")
-            success_count += 1
-
-    except Exception as e:
-        print(f"    ❌ Parameter order consistency test failed: {e}")
-
-    # Test 4: Directory structure consistency
-    print("\n4️⃣ Testing Directory Structure Consistency")
-    total_tests += 1
-
-    try:
-        # Test that both image and audio functions create the same directory structure
-        with mock.patch("media.media_utils.genai"):
-            with mock.patch("media.media_utils.types"):
-                with mock.patch("media.media_utils.Image"):
-                    with mock.patch("media.media_utils.wave"):
-                        created_dirs = []
-
-                        def mock_makedirs(path, exist_ok=False):
-                            created_dirs.append(path)
-
-                        with mock.patch("media.media_utils.os.makedirs", side_effect=mock_makedirs):
-                            from media.media_utils import create_image, wave_file
-
-                            show = "Test Show"
-                            season = "1"
-                            episode = "1"
-
-                            # Create image - should create directory
-                            create_image("test", episode, season, show, 0)
-
-                            # Create audio - should create same directory
-                            wave_file(show, season, episode, "test content")
-
-                            # Both should create the same directory structure
-                            expected_dir = f"{show}/Season{season}/Episode{episode}"
-
-                            assert len(created_dirs) >= 2, (
-                                "Should create directories for both image and audio"
-                            )
-
-                            # All created directories should be the same
-                            unique_dirs = set(created_dirs)
-                            assert len(unique_dirs) == 1, (
-                                f"Multiple different directories created: {unique_dirs}"
-                            )
-
-                            assert expected_dir in created_dirs, (
-                                f"Expected directory {expected_dir} not created. Created: {created_dirs}"
-                            )
-
-                            print(
-                                "    ✅ Directory structure is consistent between media functions"
-                            )
-                            success_count += 1
-
-    except Exception as e:
-        print(f"    ❌ Directory structure consistency test failed: {e}")
-
-    # Test 5: File naming pattern consistency
-    print("\n5️⃣ Testing File Naming Pattern Consistency")
-    total_tests += 1
-
-    try:
-        # Test that file naming follows expected patterns
-        saved_files = []
-
-        def capture_save(path):
-            saved_files.append(path)
-
-        with mock.patch("media.media_utils.genai"):
-            with mock.patch("media.media_utils.types"):
-                with mock.patch("media.media_utils.os.makedirs"):
-                    with mock.patch("media.media_utils.wave"):
-                        # Mock image saving
-                        mock_image = mock.Mock()
-                        mock_image.save = capture_save
-                        with mock.patch("media.media_utils.Image.new", return_value=mock_image):
-                            # Mock wave file operations for audio
-                            def mock_wave_open(path, mode):
-                                saved_files.append(path)
-                                return mock.Mock()
-
-                            with mock.patch(
-                                "media.media_utils.wave.open", side_effect=mock_wave_open
-                            ):
-                                from media.media_utils import create_image, wave_file
-
-                                show = "Test Show"
-                                season = "1"
-                                episode = "1"
-
-                                # Create image
-                                create_image("test", episode, season, show, 5)
-
-                                # Create audio
-                                wave_file(show, season, episode, "test content")
-
-                                # Verify file naming patterns
-                                image_files = [f for f in saved_files if f.endswith(".png")]
-                                audio_files = [f for f in saved_files if f.endswith(".wav")]
-
-                                assert len(image_files) > 0, "No image files were saved"
-                                assert len(audio_files) > 0, "No audio files were saved"
-
-                                # Check image naming pattern
-                                expected_image = (
-                                    f"{show}/Season{season}/Episode{episode}/{show}_{episode}_5.png"
-                                )
-                                assert expected_image in image_files, (
-                                    f"Expected image {expected_image} not found. Found: {image_files}"
-                                )
-
-                                # Check audio naming pattern
-                                expected_audio = (
-                                    f"{show}/Season{season}/Episode{episode}/{show}_{episode}.wav"
-                                )
-                                assert expected_audio in audio_files, (
-                                    f"Expected audio {expected_audio} not found. Found: {audio_files}"
-                                )
-
-                                print("    ✅ File naming patterns are consistent and predictable")
-                                success_count += 1
-
-    except Exception as e:
-        print(f"    ❌ File naming pattern test failed: {e}")
-
-    # Summary
-    print(f"\n{'=' * 60}")
-    print("FILE PATH CONSISTENCY TEST SUMMARY")
-    print(f"{'=' * 60}")
-
-    success_rate = success_count / total_tests if total_tests > 0 else 0
-    print(f"Passed: {success_count}/{total_tests}")
-    print(f"Success rate: {success_rate:.1%}")
-
-    if success_rate >= 0.8:
-        print("✅ File path consistency is maintained across media functions!")
-        return True
-    else:
-        print("❌ File path consistency issues detected!")
-        return False
-
-
-def main():
-    """Run all file path consistency tests."""
-    if test_file_path_consistency():
-        sys.exit(0)
-    else:
-        sys.exit(1)
+    create_image("a test prompt", episode, SEASON, SHOW, 0)
+    wave_file(SHOW, SEASON, episode, "narration for the slide")
+
+    written = in_tmp_cwd / episode_dir(episode) / f"{SHOW}_{episode}_0.png"
+    assert written.is_file(), f"no {label} image was written to {written}"
+
+    mp4_file_enhanced(SHOW, SEASON, episode, ["test sentence"], [1.0])
+
+    assert captured_video_paths, "the video step opened no images at all"
+    assert captured_video_paths[0] == str(episode_dir(episode) / f"{SHOW}_{episode}_0.png")
+    assert (in_tmp_cwd / captured_video_paths[0]).is_file(), (
+        f"the video looks for {captured_video_paths[0]}, which no step wrote"
+    )
+
+
+def test_the_video_reads_one_image_per_sentence_in_order(
+    in_tmp_cwd, no_api_key, captured_video_paths
+):
+    """Index ``i`` of the slide list must map to ``..._{i}.png``."""
+    from media.media_utils import create_images, mp4_file_enhanced, wave_file
+
+    sentences = ["first slide", "second slide", "third slide"]
+    create_images(sentences, "1", SEASON, SHOW)
+    wave_file(SHOW, SEASON, "1", "narration")
+
+    mp4_file_enhanced(SHOW, SEASON, "1", sentences, [1.0, 1.0, 1.0])
+
+    assert captured_video_paths == [
+        str(episode_dir("1") / f"{SHOW}_1_{index}.png") for index in range(len(sentences))
+    ]
+    for path in captured_video_paths:
+        assert (in_tmp_cwd / path).is_file(), f"the video looks for {path}, which was never written"
+
+
+def test_create_images_passes_its_arguments_through_in_order():
+    """``create_images`` fans out to ``create_image``; the order is positional."""
+    from media.media_utils import create_images
+
+    with mock.patch("media.media_utils.create_image") as create_image:
+        create_images(["sentence 1", "sentence 2"], "1", SEASON, SHOW)
+
+    assert [call.args for call in create_image.call_args_list] == [
+        ("sentence 1", "1", SEASON, SHOW, 0),
+        ("sentence 2", "1", SEASON, SHOW, 1),
+    ]
+
+
+def test_image_and_audio_share_one_episode_directory(in_tmp_cwd, no_api_key):
+    """Both media functions must build the same directory, not two near-misses."""
+    from media.media_utils import create_image, wave_file
+
+    create_image("a test prompt", "1", SEASON, SHOW, 5)
+    wave_file(SHOW, SEASON, "1", "test content")
+
+    expected = in_tmp_cwd / episode_dir("1")
+    assert sorted(path.name for path in expected.iterdir()) == [
+        f"{SHOW}_1.wav",
+        f"{SHOW}_1_5.png",
+    ]
 
 
 if __name__ == "__main__":
-    main()
+    # `scripts/run_regression_suite.py` runs this module as a script. Delegating
+    # to pytest keeps a direct run and a collected run executing the same checks
+    # and reporting the same exit status.
+    raise SystemExit(pytest.main([__file__, *sys.argv[1:]]))

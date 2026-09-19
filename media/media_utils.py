@@ -240,8 +240,8 @@ def wave_file(
                 f"AI audio generation failed ({error_msg[:100]}) - creating silent audio"
             )
 
-        # Create silent audio file as fallback
-        return create_silent_audio_fallback(file_name, contents)
+        # Create silent audio file as fallback, at the rate the caller asked for
+        return create_silent_audio_fallback(file_name, contents, sample_rate=rate)
 
     # Write the audio data to a WAV file with specified parameters
     with wave.open(file_name, "wb") as wf:
@@ -256,8 +256,6 @@ def wave_file(
 
 def create_silent_audio_fallback(filename: str, contents: str, sample_rate: int = 24000) -> float:
     """Create a silent audio file as fallback when TTS fails."""
-    import wave
-
     # Estimate duration based on text length (rough approximation: 150 words per minute)
     word_count = len(contents.split())
     estimated_duration = max(60.0, word_count / 2.5)  # Minimum 1 minute, ~150 WPM reading speed
@@ -265,15 +263,25 @@ def create_silent_audio_fallback(filename: str, contents: str, sample_rate: int 
     # Calculate number of frames
     num_frames = int(estimated_duration * sample_rate)
 
-    # Create silent audio data (16-bit mono)
-    silence = b"\x00\x00" * num_frames
+    # Make sure the destination directory exists: this runs on the TTS-failure
+    # path, which callers may reach before creating any output directory.
+    parent = os.path.dirname(filename)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 
-    # Write WAV file
-    with wave.open(filename, "w") as wav_file:
+    # Write WAV file. A full-length transcript can run to hours of narration, so
+    # the silence is written a second at a time rather than materialising the
+    # whole buffer (2 bytes * rate * duration) in memory first.
+    frames_per_write = sample_rate
+    with wave.open(filename, "wb") as wav_file:
         wav_file.setnchannels(1)  # Mono
         wav_file.setsampwidth(2)  # 16-bit
         wav_file.setframerate(sample_rate)
-        wav_file.writeframes(silence)
+        remaining = num_frames
+        while remaining > 0:
+            block = min(frames_per_write, remaining)
+            wav_file.writeframes(b"\x00\x00" * block)
+            remaining -= block
 
     print(
         f"🔇 Created {estimated_duration:.1f}s silent audio track - Perfect for adding your own voice-over!"
