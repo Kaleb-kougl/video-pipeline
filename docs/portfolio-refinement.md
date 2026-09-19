@@ -33,6 +33,8 @@ asserted against the mock. Meanwhile `README.md:18` and `README.md:99` claimed a
 
 Second instance, `agents/parallel_image_generator.py:163`:
 
+<!-- docs-check: skip - a two-line excerpt of a deleted function's body, quoted as evidence -->
+
 ```python
 # Check if it's a mock (has return_value attribute)
 if hasattr(self.ai_client.models.generate_content, "return_value"):

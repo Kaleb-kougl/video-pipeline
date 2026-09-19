@@ -24,6 +24,8 @@ generation pipeline". It was cut to what can be checked against the source.
 
 Every signature below is current as of `core/content_cache.py`.
 
+<!-- docs-check: signatures core.content_cache.ContentCache -->
+
 ```python
 class ContentCache:
     def __init__(self, config: CacheConfig | None = None)
@@ -43,6 +45,8 @@ class ContentCache:
 ```
 
 Factory:
+
+<!-- docs-check: signatures core.content_cache -->
 
 ```python
 def create_content_cache(max_content_entries: int = 1000,
@@ -158,6 +162,8 @@ the default threshold returns `None`, not a hit.
 `IntelligentFormatAdapter` (`core/intelligent_format_adapter.py`) is a separate
 component, and the orchestrator does use it. Its two public methods are
 coroutines, and **`quality_profile` is a required positional argument**:
+
+<!-- docs-check: signatures core.intelligent_format_adapter.IntelligentFormatAdapter -->
 
 ```python
 async def adapt_content_for_platform(self, content: dict, platform: str,

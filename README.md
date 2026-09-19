@@ -96,6 +96,8 @@ deterministic ones.
 their stage 0.0-1.0. What makes them useful is the gate table in
 `quality_coordinator.py`:
 
+<!-- docs-check: skip - three rows of a dict literal, not a standalone statement -->
+
 ```python
 'transcript_discovery': {'min_score': 0.6, 'critical': True},
 'content_generation':   {'min_score': 0.7, 'critical': True},

@@ -7,6 +7,8 @@
 > never defined. Every signature and command below was re-checked against
 > `agents/character_analysis_agent.py` and `main.py`.
 
+<!-- docs-check: bind self=agents.character_analysis_agent.CharacterAnalysisAgent agent=agents.character_analysis_agent.CharacterAnalysisAgent -->
+
 This document describes the advanced character analysis capabilities powered by ChromaDB vector database integration.
 
 ## 🎭 Overview
@@ -236,8 +238,15 @@ The character analysis system uses three ChromaDB collections:
    - Enables development arc analysis
 
 All three collections are shared across shows, so every write must carry show
-identity. Build entry metadata through `BaseMetadata.create()` in
-`core/metadata_schemas.py`, which canonicalizes the show name via
+identity. Build entry metadata through the named constructor on the concrete
+class — `CharacterMetadata.create()` or `InteractionMetadata.create()` — each
+of which fills the six shared identity fields from
+`BaseMetadata.identity_fields()` in `core/metadata_schemas.py`. There is
+deliberately no inherited `BaseMetadata.create()`<!-- docs-check: absent BaseMetadata.create - removed in 7eabf6f; see identity_fields() -->: the two subclasses take
+different required arguments, so one shared signature could only be honoured by
+both of them violating it, which is what kept this module behind a mypy
+`ignore_errors` until `7eabf6f`. `identity_fields()` canonicalizes the show
+name via
 `core/show_registry.py` and derives `episode_key` as
 `{show_id}_S{season}E{episode}`. Calling the analysis methods without a show
 name raises `ValueError: show_name is required to prevent cross-show

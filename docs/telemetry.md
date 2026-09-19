@@ -58,6 +58,8 @@ run's timings are the interesting ones.
 sum of the stages, so the part of a run that is *not* inside an instrumented
 stage is visible instead of implied. It is currently ~0.2 ms.
 
+<!-- verified: c262fff sources: core/telemetry.py, scripts/demo.py -->
+
 ## How tokens are captured, and why it is done the awkward way
 
 `generate_structured_summary()` calls `model_with_structure.invoke(prompt)`,
@@ -136,7 +138,13 @@ model that actually answered.
 
 ## What a run prints
 
-Verbatim from `make demo` on 2026-09-18 (macOS, Apple silicon, Python 3.12):
+Verbatim from `make demo` on 2026-09-18 (macOS, Apple silicon, Python 3.12).
+These are measurements, not a computed artifact, so no test can recompute them;
+the tag below names the commit they were measured at and the sources they rest
+on, and `tests/test_docs_contract.py` fails the build if either source moves
+without the numbers being taken again.
+
+<!-- verified: c262fff sources: core/telemetry.py, scripts/demo.py -->
 
 ```
 ------------------------------------------------------------------------------
