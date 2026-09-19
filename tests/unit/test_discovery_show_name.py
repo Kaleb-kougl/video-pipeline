@@ -58,9 +58,7 @@ def test_no_legacy_fallback_for_a_show_the_base_url_does_not_cover(agent, monkey
     `self.base_url` is hardcoded to one series, so a legacy URL built for
     "Naruto" resolves to a My Hero Academia transcript and validates happily.
     """
-    monkeypatch.setattr(
-        agent, "search_episode_enhanced", lambda *args, **kwargs: None
-    )
+    monkeypatch.setattr(agent, "search_episode_enhanced", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         agent,
         "validate_episode_url",

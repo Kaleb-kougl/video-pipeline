@@ -11,13 +11,14 @@ This module tests the integration between all Phase 2 components:
 Tests validate that components work together seamlessly.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-from core.character_episode_enhancer import EpisodeCharacterEnhancer, CharacterWeight
-from core.visual_coherence_manager import VisualCoherenceManager
+import pytest
+
 from core.adaptive_quality_manager import AdaptiveQualityManager
+from core.character_episode_enhancer import EpisodeCharacterEnhancer
 from core.intelligent_format_adapter import IntelligentFormatAdapter
+from core.visual_coherence_manager import VisualCoherenceManager
 
 
 class TestQualityEnhancementIntegration:
@@ -63,36 +64,26 @@ class TestQualityEnhancementIntegration:
         pipeline = quality_enhancement_pipeline
 
         # Step 1: Character Enhancement
-        enhanced_episode = await pipeline[
-            "character_enhancer"
-        ].enhance_episode_with_character_data(
+        enhanced_episode = await pipeline["character_enhancer"].enhance_episode_with_character_data(
             sample_episode_content, sample_character_analysis
         )
 
-        assert (
-            "scenes" in enhanced_episode
-        ), "Character enhancement should return enhanced scenes"
-        assert (
-            "character_focus" in enhanced_episode
-        ), "Should include character focus data"
+        assert "scenes" in enhanced_episode, "Character enhancement should return enhanced scenes"
+        assert "character_focus" in enhanced_episode, "Should include character focus data"
 
         # Step 2: Quality Profile Selection
         quality_profile = await pipeline["quality_manager"].select_quality_profile(
             context="preview"
         )
 
-        assert (
-            quality_profile.name == "preview"
-        ), "Should select appropriate quality profile"
+        assert quality_profile.name == "preview", "Should select appropriate quality profile"
 
         # Step 3: Platform Adaptation with Enhanced Content
         platform_result = await pipeline["format_adapter"].adapt_content_for_platform(
             enhanced_episode, "tiktok", quality_profile
         )
 
-        assert (
-            "adapted_content" in platform_result
-        ), "Should adapt enhanced content for platform"
+        assert "adapted_content" in platform_result, "Should adapt enhanced content for platform"
         assert "engagement_prediction" in platform_result, "Should predict engagement"
 
         # Validate end-to-end enhancement
@@ -100,9 +91,7 @@ class TestQualityEnhancementIntegration:
         final_duration = sum(scene["duration"] for scene in final_content["scenes"])
 
         assert final_duration <= 60, "Final content should respect TikTok time limit"
-        assert (
-            len(final_content["scenes"]) > 0
-        ), "Should maintain content through pipeline"
+        assert len(final_content["scenes"]) > 0, "Should maintain content through pipeline"
 
     @pytest.mark.asyncio
     async def test_visual_coherence_with_character_enhancement(
@@ -123,9 +112,7 @@ class TestQualityEnhancementIntegration:
         pipeline = quality_enhancement_pipeline
 
         # Enhance episode with character data
-        enhanced_episode = await pipeline[
-            "character_enhancer"
-        ].enhance_episode_with_character_data(
+        enhanced_episode = await pipeline["character_enhancer"].enhance_episode_with_character_data(
             sample_episode_content, sample_character_analysis
         )
 
@@ -154,30 +141,26 @@ class TestQualityEnhancementIntegration:
 
         # Verify enhanced prompt was used
         called_prompt = generator.prompts[0]
-        assert len(called_prompt) > len(
-            enhanced_prompt
-        ), "Prompt should be further enhanced for consistency"
+        assert len(called_prompt) > len(enhanced_prompt), (
+            "Prompt should be further enhanced for consistency"
+        )
         for character in characters:
             assert character in called_prompt, "Should carry character context"
 
         # Reference data was really updated from the generated image
         for character in characters:
-            assert isinstance(
-                coherence.character_references[character], np.ndarray
-            ), "Accepted image should become the character reference"
+            assert isinstance(coherence.character_references[character], np.ndarray), (
+                "Accepted image should become the character reference"
+            )
 
     @pytest.mark.asyncio
-    async def test_visual_coherence_refuses_to_fake_generation(
-        self, quality_enhancement_pipeline
-    ):
+    async def test_visual_coherence_refuses_to_fake_generation(self, quality_enhancement_pipeline):
         """
         The pipeline's visual coherence manager has no image generator wired up,
         so it must refuse rather than return a path to a file that never exists.
         """
         with pytest.raises(NotImplementedError, match="Inject an image generator"):
-            await quality_enhancement_pipeline[
-                "visual_coherence"
-            ].generate_consistent_image(
+            await quality_enhancement_pipeline["visual_coherence"].generate_consistent_image(
                 "A scene", ["Naruto"], {"episode_id": "integration_test"}
             )
 
@@ -194,9 +177,7 @@ class TestQualityEnhancementIntegration:
         """
         pipeline = quality_enhancement_pipeline
 
-        enhanced_episode = await pipeline[
-            "character_enhancer"
-        ].enhance_episode_with_character_data(
+        enhanced_episode = await pipeline["character_enhancer"].enhance_episode_with_character_data(
             sample_episode_content, sample_character_analysis
         )
         first_scene = enhanced_episode["scenes"][0]
@@ -229,9 +210,7 @@ class TestQualityEnhancementIntegration:
         pipeline = quality_enhancement_pipeline
 
         # First enhance episode to get proper duration fields
-        enhanced_episode = await pipeline[
-            "character_enhancer"
-        ].enhance_episode_with_character_data(
+        enhanced_episode = await pipeline["character_enhancer"].enhance_episode_with_character_data(
             sample_episode_content, sample_character_analysis
         )
 
@@ -246,9 +225,7 @@ class TestQualityEnhancementIntegration:
             )
 
             # Adapt content with quality profile (use enhanced episode)
-            adaptation_result = await pipeline[
-                "format_adapter"
-            ].adapt_content_for_platform(
+            adaptation_result = await pipeline["format_adapter"].adapt_content_for_platform(
                 enhanced_episode, "youtube_shorts", quality_profile
             )
 
@@ -262,9 +239,9 @@ class TestQualityEnhancementIntegration:
         preview_quality = results["preview"]["quality_profile"].image_quality
         production_quality = results["production"]["quality_profile"].image_quality
 
-        assert (
-            draft_quality <= preview_quality <= production_quality
-        ), "Quality should increase across contexts"
+        assert draft_quality <= preview_quality <= production_quality, (
+            "Quality should increase across contexts"
+        )
 
     @pytest.mark.asyncio
     async def test_error_propagation_and_handling(
@@ -283,9 +260,7 @@ class TestQualityEnhancementIntegration:
         # Test with missing character analysis (should degrade gracefully)
         empty_character_analysis = {"profiles": {}}
 
-        enhanced_episode = await pipeline[
-            "character_enhancer"
-        ].enhance_episode_with_character_data(
+        enhanced_episode = await pipeline["character_enhancer"].enhance_episode_with_character_data(
             sample_episode_content, empty_character_analysis
         )
 
@@ -302,9 +277,7 @@ class TestQualityEnhancementIntegration:
         )
 
         assert adaptation_result is not None, "Should handle degraded enhancement data"
-        assert (
-            "adapted_content" in adaptation_result
-        ), "Should still produce adapted content"
+        assert "adapted_content" in adaptation_result, "Should still produce adapted content"
 
     @pytest.mark.asyncio
     async def test_performance_constraints_integration(
@@ -321,9 +294,10 @@ class TestQualityEnhancementIntegration:
         - Memory usage stays within bounds across components
         - Processing time is acceptable for production use
         """
-        import time
-        import psutil
         import gc
+        import time
+
+        import psutil
 
         pipeline = quality_enhancement_pipeline
 
@@ -334,9 +308,7 @@ class TestQualityEnhancementIntegration:
 
         # Run complete pipeline
         # 1. Character enhancement
-        enhanced_episode = await pipeline[
-            "character_enhancer"
-        ].enhance_episode_with_character_data(
+        enhanced_episode = await pipeline["character_enhancer"].enhance_episode_with_character_data(
             sample_episode_content, sample_character_analysis
         )
 
@@ -359,12 +331,12 @@ class TestQualityEnhancementIntegration:
         memory_increase = final_memory - initial_memory
 
         # Assert performance constraints
-        assert (
-            total_processing_time < 5.0
-        ), f"Complete pipeline should finish within 5s, took {total_processing_time:.2f}s"
-        assert (
-            memory_increase < 500
-        ), f"Memory increase should be reasonable, increased by {memory_increase:.1f}MB"
+        assert total_processing_time < 5.0, (
+            f"Complete pipeline should finish within 5s, took {total_processing_time:.2f}s"
+        )
+        assert memory_increase < 500, (
+            f"Memory increase should be reasonable, increased by {memory_increase:.1f}MB"
+        )
         assert adaptation_result is not None, "Should successfully complete pipeline"
 
 

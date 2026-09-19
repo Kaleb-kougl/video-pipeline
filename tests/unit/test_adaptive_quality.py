@@ -9,10 +9,10 @@ performance constraints.
 Following TDD methodology - these tests should FAIL initially (RED phase).
 """
 
-import pytest
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
-from typing import Dict, Any
+from unittest.mock import patch
+
+import pytest
 
 # Import the module we're testing - will fail initially
 try:
@@ -69,35 +69,23 @@ class TestAdaptiveQualityManager:
             profile = await quality_manager.select_quality_profile(context=context)
 
             # Assert
-            assert isinstance(
-                profile, QualityProfile
-            ), f"Should return QualityProfile for {context}"
-            assert (
-                profile.name == context
-            ), f"Profile name should match context {context}"
+            assert isinstance(profile, QualityProfile), (
+                f"Should return QualityProfile for {context}"
+            )
+            assert profile.name == context, f"Profile name should match context {context}"
 
             # Validate quality hierarchy
             if context == "draft":
-                assert (
-                    profile.image_quality <= 0.7
-                ), "Draft should have lower image quality"
-                assert (
-                    profile.processing_priority == "speed"
-                ), "Draft should prioritize speed"
+                assert profile.image_quality <= 0.7, "Draft should have lower image quality"
+                assert profile.processing_priority == "speed", "Draft should prioritize speed"
             elif context == "preview":
-                assert (
-                    0.7 < profile.image_quality <= 0.9
-                ), "Preview should have medium quality"
-                assert (
-                    profile.processing_priority == "balanced"
-                ), "Preview should be balanced"
+                assert 0.7 < profile.image_quality <= 0.9, "Preview should have medium quality"
+                assert profile.processing_priority == "balanced", "Preview should be balanced"
             elif context == "production":
-                assert (
-                    profile.image_quality > 0.9
-                ), "Production should have highest quality"
-                assert (
-                    profile.processing_priority == "quality"
-                ), "Production should prioritize quality"
+                assert profile.image_quality > 0.9, "Production should have highest quality"
+                assert profile.processing_priority == "quality", (
+                    "Production should prioritize quality"
+                )
 
         # Test invalid context
         with pytest.raises(KeyError):
@@ -129,12 +117,12 @@ class TestAdaptiveQualityManager:
             )
 
             # Assert - Should be downgraded
-            assert (
-                low_resource_profile.memory_limit_mb <= 2048
-            ), "Memory limit should be reduced for low-resource system"
-            assert (
-                low_resource_profile.max_concurrent_jobs <= 2
-            ), "Concurrent jobs should be limited on low-resource system"
+            assert low_resource_profile.memory_limit_mb <= 2048, (
+                "Memory limit should be reduced for low-resource system"
+            )
+            assert low_resource_profile.max_concurrent_jobs <= 2, (
+                "Concurrent jobs should be limited on low-resource system"
+            )
 
         with patch.object(
             quality_manager,
@@ -147,12 +135,12 @@ class TestAdaptiveQualityManager:
             )
 
             # Assert - Should maintain high quality
-            assert (
-                high_resource_profile.memory_limit_mb >= 4096
-            ), "Memory limit should be higher for high-resource system"
-            assert (
-                high_resource_profile.image_quality >= 0.9
-            ), "Image quality should be maintained on high-resource system"
+            assert high_resource_profile.memory_limit_mb >= 4096, (
+                "Memory limit should be higher for high-resource system"
+            )
+            assert high_resource_profile.image_quality >= 0.9, (
+                "Image quality should be maintained on high-resource system"
+            )
 
     @pytest.mark.asyncio
     async def test_deadline_pressure_quality_adaptation(self, quality_manager):
@@ -183,9 +171,9 @@ class TestAdaptiveQualityManager:
                 "speed",
                 "balanced",
             ], "Tight deadline should prioritize speed or balanced processing"
-            assert (
-                tight_profile.max_concurrent_jobs >= 3
-            ), "Tight deadline should increase concurrent processing"
+            assert tight_profile.max_concurrent_jobs >= 3, (
+                "Tight deadline should increase concurrent processing"
+            )
 
         # Test with loose deadline (1 week from now)
         loose_deadline = datetime.now() + timedelta(weeks=1)
@@ -199,12 +187,12 @@ class TestAdaptiveQualityManager:
             )
 
             # Assert
-            assert (
-                loose_profile.processing_priority == "quality"
-            ), "Loose deadline should prioritize quality"
-            assert (
-                loose_profile.image_quality >= 0.9
-            ), "Loose deadline should maintain high image quality"
+            assert loose_profile.processing_priority == "quality", (
+                "Loose deadline should prioritize quality"
+            )
+            assert loose_profile.image_quality >= 0.9, (
+                "Loose deadline should maintain high image quality"
+            )
 
     @pytest.mark.asyncio
     async def test_quality_metrics_tracking(self, quality_manager):
@@ -241,18 +229,14 @@ class TestAdaptiveQualityManager:
         quality_manager.record_quality_metrics(quality_profile, processing_metrics)
 
         # Assert
-        assert hasattr(
-            quality_manager, "quality_history"
-        ), "Should maintain quality history"
+        assert hasattr(quality_manager, "quality_history"), "Should maintain quality history"
         assert len(quality_manager.quality_history) > 0, "Should record quality metrics"
 
         # Check recorded data structure
         recorded_entry = quality_manager.quality_history[-1]
         assert "profile_name" in recorded_entry, "Should record profile name"
         assert "timestamp" in recorded_entry, "Should record timestamp"
-        assert (
-            "processing_metrics" in recorded_entry
-        ), "Should record processing metrics"
+        assert "processing_metrics" in recorded_entry, "Should record processing metrics"
 
     def test_system_resource_monitoring(self, quality_manager):
         """
@@ -270,21 +254,15 @@ class TestAdaptiveQualityManager:
         resources = quality_manager._get_system_resources()
 
         # Assert
-        assert isinstance(
-            resources, SystemResources
-        ), "Should return SystemResources object"
+        assert isinstance(resources, SystemResources), "Should return SystemResources object"
         assert resources.memory_gb > 0, "Should report positive memory amount"
         assert resources.cpu_cores > 0, "Should report positive CPU core count"
-        assert (
-            0.0 <= resources.cpu_usage_percent <= 100.0
-        ), "CPU usage should be valid percentage"
+        assert 0.0 <= resources.cpu_usage_percent <= 100.0, "CPU usage should be valid percentage"
         assert resources.available_disk_gb >= 0, "Available disk should be non-negative"
 
         # Test multiple calls for consistency
         resources_2 = quality_manager._get_system_resources()
-        assert isinstance(
-            resources_2, SystemResources
-        ), "Should consistently return valid data"
+        assert isinstance(resources_2, SystemResources), "Should consistently return valid data"
 
     @pytest.mark.asyncio
     async def test_memory_constraint_enforcement(self, quality_manager):
@@ -308,12 +286,12 @@ class TestAdaptiveQualityManager:
             profile = await quality_manager.select_quality_profile(context="production")
 
             # Assert
-            assert (
-                profile.memory_limit_mb < 4096
-            ), "Memory limit should be under 4GB for constrained system"
-            assert (
-                profile.memory_limit_mb <= 3000
-            ), "Memory limit should respect available system memory"
+            assert profile.memory_limit_mb < 4096, (
+                "Memory limit should be under 4GB for constrained system"
+            )
+            assert profile.memory_limit_mb <= 3000, (
+                "Memory limit should respect available system memory"
+            )
 
         # Test memory usage validation
         test_profile = QualityProfile(
@@ -330,9 +308,9 @@ class TestAdaptiveQualityManager:
         validated_profile = quality_manager._validate_memory_constraints(test_profile)
 
         # Assert
-        assert (
-            validated_profile.memory_limit_mb <= 4096
-        ), "Memory constraint should enforce 4GB limit"
+        assert validated_profile.memory_limit_mb <= 4096, (
+            "Memory constraint should enforce 4GB limit"
+        )
 
     @pytest.mark.asyncio
     async def test_profile_adjustment_for_low_resources(self, quality_manager):
@@ -369,18 +347,18 @@ class TestAdaptiveQualityManager:
         )
 
         # Assert
-        assert (
-            adjusted_profile.image_quality < original_quality
-        ), "Image quality should be reduced for low resources"
-        assert (
-            adjusted_profile.max_concurrent_jobs <= 2
-        ), "Concurrent jobs should be limited for low CPU"
-        assert (
-            adjusted_profile.memory_limit_mb <= 1300
-        ), "Memory limit should be reduced for low memory system"
-        assert (
-            adjusted_profile.processing_priority == "speed"
-        ), "Should prioritize speed under resource pressure"
+        assert adjusted_profile.image_quality < original_quality, (
+            "Image quality should be reduced for low resources"
+        )
+        assert adjusted_profile.max_concurrent_jobs <= 2, (
+            "Concurrent jobs should be limited for low CPU"
+        )
+        assert adjusted_profile.memory_limit_mb <= 1300, (
+            "Memory limit should be reduced for low memory system"
+        )
+        assert adjusted_profile.processing_priority == "speed", (
+            "Should prioritize speed under resource pressure"
+        )
 
     def test_time_pressure_calculation(self, quality_manager):
         """
@@ -396,29 +374,27 @@ class TestAdaptiveQualityManager:
         """
         # Test immediate deadline (high pressure)
         immediate_deadline = datetime.now() + timedelta(minutes=30)
-        immediate_pressure = quality_manager._calculate_time_pressure(
-            immediate_deadline
-        )
+        immediate_pressure = quality_manager._calculate_time_pressure(immediate_deadline)
 
-        assert (
-            0.8 <= immediate_pressure <= 1.0
-        ), f"Immediate deadline should create high pressure, got {immediate_pressure:.3f}"
+        assert 0.8 <= immediate_pressure <= 1.0, (
+            f"Immediate deadline should create high pressure, got {immediate_pressure:.3f}"
+        )
 
         # Test moderate deadline (medium pressure)
         moderate_deadline = datetime.now() + timedelta(hours=4)
         moderate_pressure = quality_manager._calculate_time_pressure(moderate_deadline)
 
-        assert (
-            0.3 <= moderate_pressure <= 0.7
-        ), f"Moderate deadline should create medium pressure, got {moderate_pressure:.3f}"
+        assert 0.3 <= moderate_pressure <= 0.7, (
+            f"Moderate deadline should create medium pressure, got {moderate_pressure:.3f}"
+        )
 
         # Test distant deadline (low pressure)
         distant_deadline = datetime.now() + timedelta(days=1)
         distant_pressure = quality_manager._calculate_time_pressure(distant_deadline)
 
-        assert (
-            0.0 <= distant_pressure <= 0.3
-        ), f"Distant deadline should create low pressure, got {distant_pressure:.3f}"
+        assert 0.0 <= distant_pressure <= 0.3, (
+            f"Distant deadline should create low pressure, got {distant_pressure:.3f}"
+        )
 
         # Test no deadline
         no_deadline_pressure = quality_manager._calculate_time_pressure(None)
@@ -441,30 +417,28 @@ class TestAdaptiveQualityManager:
             profile = quality_manager.quality_profiles[profile_name]
 
             # Assert valid ranges
-            assert (
-                0.0 <= profile.image_quality <= 1.0
-            ), f"{profile_name} should have valid image quality"
-            assert (
-                profile.video_resolution[0] > 0 and profile.video_resolution[1] > 0
-            ), f"{profile_name} should have valid resolution"
-            assert (
-                0 <= profile.compression_level <= 100
-            ), f"{profile_name} should have valid compression level"
-            assert (
-                profile.max_concurrent_jobs > 0
-            ), f"{profile_name} should have positive concurrent jobs"
-            assert (
-                profile.memory_limit_mb > 0
-            ), f"{profile_name} should have positive memory limit"
+            assert 0.0 <= profile.image_quality <= 1.0, (
+                f"{profile_name} should have valid image quality"
+            )
+            assert profile.video_resolution[0] > 0 and profile.video_resolution[1] > 0, (
+                f"{profile_name} should have valid resolution"
+            )
+            assert 0 <= profile.compression_level <= 100, (
+                f"{profile_name} should have valid compression level"
+            )
+            assert profile.max_concurrent_jobs > 0, (
+                f"{profile_name} should have positive concurrent jobs"
+            )
+            assert profile.memory_limit_mb > 0, f"{profile_name} should have positive memory limit"
 
         # Test profile ordering (draft < preview < production)
         draft = quality_manager.quality_profiles["draft"]
         preview = quality_manager.quality_profiles["preview"]
         production = quality_manager.quality_profiles["production"]
 
-        assert (
-            draft.image_quality <= preview.image_quality <= production.image_quality
-        ), "Quality should increase: draft <= preview <= production"
+        assert draft.image_quality <= preview.image_quality <= production.image_quality, (
+            "Quality should increase: draft <= preview <= production"
+        )
 
     @pytest.mark.asyncio
     async def test_performance_optimization_feedback(self, quality_manager):
@@ -480,12 +454,8 @@ class TestAdaptiveQualityManager:
         - Bad performing profiles are avoided
         """
         # Arrange - Record some performance history
-        good_profile = QualityProfile(
-            "good_profile", 0.8, (1920, 1080), 85, "balanced", 4, 2048
-        )
-        bad_profile = QualityProfile(
-            "bad_profile", 1.0, (3840, 2160), 100, "quality", 8, 6000
-        )
+        good_profile = QualityProfile("good_profile", 0.8, (1920, 1080), 85, "balanced", 4, 2048)
+        bad_profile = QualityProfile("bad_profile", 1.0, (3840, 2160), 100, "quality", 8, 6000)
 
         # Record good performance
         quality_manager.record_quality_metrics(
@@ -518,12 +488,12 @@ class TestAdaptiveQualityManager:
             )
 
             # Assert - Should avoid bad profile characteristics
-            assert (
-                optimized_profile.memory_limit_mb <= 4096
-            ), "Should avoid memory-excessive settings based on history"
-            assert (
-                optimized_profile.max_concurrent_jobs <= 6
-            ), "Should limit concurrent jobs based on performance history"
+            assert optimized_profile.memory_limit_mb <= 4096, (
+                "Should avoid memory-excessive settings based on history"
+            )
+            assert optimized_profile.max_concurrent_jobs <= 6, (
+                "Should limit concurrent jobs based on performance history"
+            )
 
     @pytest.mark.asyncio
     async def test_quality_adaptation_edge_cases(self, quality_manager):
@@ -548,13 +518,11 @@ class TestAdaptiveQualityManager:
             profile = await quality_manager.select_quality_profile(context="production")
 
             # Assert - Should still return valid profile
-            assert isinstance(
-                profile, QualityProfile
-            ), "Should return valid profile for extreme constraints"
+            assert isinstance(profile, QualityProfile), (
+                "Should return valid profile for extreme constraints"
+            )
             assert profile.memory_limit_mb > 0, "Should maintain positive memory limit"
-            assert (
-                profile.max_concurrent_jobs >= 1
-            ), "Should maintain at least 1 concurrent job"
+            assert profile.max_concurrent_jobs >= 1, "Should maintain at least 1 concurrent job"
             assert profile.image_quality > 0, "Should maintain positive image quality"
 
         # Test with past deadline (negative time pressure)
@@ -562,9 +530,7 @@ class TestAdaptiveQualityManager:
         pressure = quality_manager._calculate_time_pressure(past_deadline)
 
         assert pressure >= 0.0, "Past deadline should not create negative pressure"
-        assert (
-            pressure <= 1.0
-        ), "Past deadline pressure should be clamped to valid range"
+        assert pressure <= 1.0, "Past deadline pressure should be clamped to valid range"
 
     @pytest.mark.asyncio
     async def test_profile_copying_and_modification(self, quality_manager):
@@ -585,25 +551,20 @@ class TestAdaptiveQualityManager:
 
         # Act - Modify a copy
         with patch.object(quality_manager, "_get_system_resources") as mock_resources:
-            mock_resources.return_value = SystemResources(
-                1.0, 1, 95.0, 1.0
-            )  # Force downgrade
+            mock_resources.return_value = SystemResources(1.0, 1, 95.0, 1.0)  # Force downgrade
 
-            modified_profile = await quality_manager.select_quality_profile(
-                context="production"
-            )
+            modified_profile = await quality_manager.select_quality_profile(context="production")
 
             # Assert
             assert (
-                quality_manager.quality_profiles["production"].image_quality
-                == original_quality
+                quality_manager.quality_profiles["production"].image_quality == original_quality
             ), "Original profile should not be modified"
-            assert (
-                modified_profile.image_quality != original_quality
-            ), "Modified profile should have different quality"
-            assert (
-                modified_profile is not original_profile
-            ), "Should return different object instance"
+            assert modified_profile.image_quality != original_quality, (
+                "Modified profile should have different quality"
+            )
+            assert modified_profile is not original_profile, (
+                "Should return different object instance"
+            )
 
 
 class TestQualityProfileDataStructures:

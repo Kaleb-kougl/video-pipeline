@@ -92,7 +92,9 @@ class TestDocumentedCommandsAreReal:
             "pytest-timeout",
             "ruff-format",
         }
-        assert not invented, f"{doc} documents commands main.py does not register: {sorted(invented)}"
+        assert not invented, (
+            f"{doc} documents commands main.py does not register: {sorted(invented)}"
+        )
 
     def test_cli_reference_covers_every_command(self):
         content = (DOCS / "cli.md").read_text(encoding="utf-8")

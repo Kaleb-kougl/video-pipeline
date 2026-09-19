@@ -106,10 +106,6 @@ target-version = "py311"
 extend-exclude = [
     "htmlcov",
     "notebooks",
-    # FOLLOW-UP: tests/ is excluded while the test suite is being reworked.
-    # Baseline at the time of writing: 300 lint findings, 30 files unformatted.
-    # Drop this entry (and fix the fallout) once the test refactor lands.
-    "tests",
 ]
 
 [tool.ruff.lint]
@@ -131,6 +127,11 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.ruff.lint.per-file-ignores]
+# These modules insert the project root on sys.path before importing from it,
+# so their imports cannot sit at the top. Legitimate, not a style slip.
+"tests/test_agents_fixed.py" = ["E402"]
+"tests/test_season_processing.py" = ["E402"]
+"tests/test_transcript_source_agent.py" = ["E402"]
 # Re-exports.
 "__init__.py" = ["F401"]
 # These modules do a `sys.path.insert(0, project_root)` bootstrap before they

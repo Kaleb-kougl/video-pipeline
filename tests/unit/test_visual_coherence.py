@@ -8,13 +8,12 @@ style, character appearance, and color palette across episode images.
 Following TDD methodology - these tests should FAIL initially (RED phase).
 """
 
-import pytest
-import json
+from typing import Any
+from unittest.mock import patch
+
 import cv2
 import numpy as np
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, mock_open
-from typing import Dict, List, Any
+import pytest
 
 # Import the module we're testing - will fail initially
 try:
@@ -35,7 +34,7 @@ class TestVisualCoherenceSystem:
     """Test suite for visual coherence and consistency."""
 
     @pytest.fixture
-    def sample_episode_context(self) -> Dict[str, Any]:
+    def sample_episode_context(self) -> dict[str, Any]:
         """Sample episode context for testing."""
         return {
             "episode_id": "naruto_s1e5",
@@ -48,7 +47,7 @@ class TestVisualCoherenceSystem:
         }
 
     @pytest.fixture
-    def sample_characters(self) -> List[str]:
+    def sample_characters(self) -> list[str]:
         """Sample characters for testing."""
         return ["Naruto", "Sasuke", "Sakura"]
 
@@ -90,21 +89,21 @@ class TestVisualCoherenceSystem:
             )
 
             # Assert
-            assert isinstance(
-                consistency_metrics, VisualConsistencyMetrics
-            ), "Should return VisualConsistencyMetrics object"
-            assert (
-                0.0 <= consistency_metrics.overall_score <= 1.0
-            ), "Overall score should be between 0.0 and 1.0"
-            assert (
-                0.0 <= consistency_metrics.color_coherence_score <= 1.0
-            ), "Color coherence should be between 0.0 and 1.0"
-            assert (
-                0.0 <= consistency_metrics.style_consistency_score <= 1.0
-            ), "Style consistency should be between 0.0 and 1.0"
-            assert (
-                0.0 <= consistency_metrics.character_similarity_score <= 1.0
-            ), "Character similarity should be between 0.0 and 1.0"
+            assert isinstance(consistency_metrics, VisualConsistencyMetrics), (
+                "Should return VisualConsistencyMetrics object"
+            )
+            assert 0.0 <= consistency_metrics.overall_score <= 1.0, (
+                "Overall score should be between 0.0 and 1.0"
+            )
+            assert 0.0 <= consistency_metrics.color_coherence_score <= 1.0, (
+                "Color coherence should be between 0.0 and 1.0"
+            )
+            assert 0.0 <= consistency_metrics.style_consistency_score <= 1.0, (
+                "Style consistency should be between 0.0 and 1.0"
+            )
+            assert 0.0 <= consistency_metrics.character_similarity_score <= 1.0, (
+                "Character similarity should be between 0.0 and 1.0"
+            )
 
     @pytest.mark.asyncio
     async def test_character_appearance_consistency(self, coherence_manager):
@@ -130,24 +129,18 @@ class TestVisualCoherenceSystem:
             )
 
             # Assert
-            assert isinstance(
-                similarity_score, float
-            ), "Should return float similarity score"
-            assert (
-                0.0 <= similarity_score <= 1.0
-            ), "Similarity score should be between 0.0 and 1.0"
+            assert isinstance(similarity_score, float), "Should return float similarity score"
+            assert 0.0 <= similarity_score <= 1.0, "Similarity score should be between 0.0 and 1.0"
 
             # Test with reference data stored
             coherence_manager.character_references["Naruto"] = mock_image
-            similarity_with_ref = (
-                await coherence_manager._calculate_character_similarity(
-                    mock_image, ["Naruto"]
-                )
+            similarity_with_ref = await coherence_manager._calculate_character_similarity(
+                mock_image, ["Naruto"]
             )
 
-            assert (
-                similarity_with_ref >= similarity_score
-            ), "Similarity should be higher when reference exists"
+            assert similarity_with_ref >= similarity_score, (
+                "Similarity should be higher when reference exists"
+            )
 
     @pytest.mark.asyncio
     async def test_color_palette_coherence(self, coherence_manager):
@@ -168,27 +161,21 @@ class TestVisualCoherenceSystem:
 
         with patch("cv2.kmeans") as mock_kmeans:
             # Mock k-means clustering results
-            mock_centers = np.array(
-                [[255, 0, 0], [0, 255, 0], [0, 0, 255]], dtype=np.float32
-            )
+            mock_centers = np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]], dtype=np.float32)
             mock_kmeans.return_value = (None, None, mock_centers)
 
             # Act
-            color_score = await coherence_manager._calculate_color_coherence(
-                mock_image, episode_id
-            )
+            color_score = await coherence_manager._calculate_color_coherence(mock_image, episode_id)
 
             # Assert
             assert isinstance(color_score, float), "Should return float color score"
-            assert (
-                0.0 <= color_score <= 1.0
-            ), "Color score should be between 0.0 and 1.0"
+            assert 0.0 <= color_score <= 1.0, "Color score should be between 0.0 and 1.0"
 
             # For first image, should establish palette and return 1.0
             assert color_score == 1.0, "First image should return perfect score (1.0)"
-            assert (
-                episode_id in coherence_manager.episode_color_palettes
-            ), "Episode palette should be stored"
+            assert episode_id in coherence_manager.episode_color_palettes, (
+                "Episode palette should be stored"
+            )
 
             # Test second image with same colors (should have high coherence)
             color_score_2 = await coherence_manager._calculate_color_coherence(
@@ -216,9 +203,7 @@ class TestVisualCoherenceSystem:
         # Arrange: a permissive threshold accepts the first render and seeds the
         # episode palette, style template and character references.
         generator = make_generator(color=(200, 40, 40))
-        manager = VisualCoherenceManager(
-            consistency_threshold=0.0, image_generator=generator
-        )
+        manager = VisualCoherenceManager(consistency_threshold=0.0, image_generator=generator)
 
         first = await manager.generate_consistent_image(
             "Establishing shot", sample_characters, sample_episode_context
@@ -227,9 +212,9 @@ class TestVisualCoherenceSystem:
         assert generator.call_count == 1, "Should accept the first render"
         assert first == generator.paths[0], "Should return the generator's path"
         for character in sample_characters:
-            assert isinstance(
-                manager.character_references[character], np.ndarray
-            ), "Accepted image should become the character reference"
+            assert isinstance(manager.character_references[character], np.ndarray), (
+                "Accepted image should become the character reference"
+            )
 
         # Act: demand near-perfect consistency, then feed the loop a wildly
         # different image so the real scoring rejects every attempt.
@@ -248,16 +233,10 @@ class TestVisualCoherenceSystem:
         assert result == generator.paths[-1], "Should return the last attempt's path"
 
         retry_prompts = generator.prompts[1:]
-        assert (
-            "Test scene for consistency" in retry_prompts[0]
-        ), "Should keep the scene description"
-        assert (
-            retry_prompts[1] != retry_prompts[0]
-        ), "Prompt should be enhanced between attempts"
+        assert "Test scene for consistency" in retry_prompts[0], "Should keep the scene description"
+        assert retry_prompts[1] != retry_prompts[0], "Prompt should be enhanced between attempts"
         assert "Focus on:" in retry_prompts[1], "Enhancement should target weaknesses"
-        assert len(retry_prompts[2]) > len(
-            retry_prompts[1]
-        ), "Enhancement should be progressive"
+        assert len(retry_prompts[2]) > len(retry_prompts[1]), "Enhancement should be progressive"
 
     @pytest.mark.asyncio
     async def test_generation_requires_injected_image_generator(
@@ -300,9 +279,7 @@ class TestVisualCoherenceSystem:
         assert "consistency" in prompt.lower()
 
         # Known characters are described as requiring a consistent appearance
-        coherence_manager.character_references["Naruto"] = np.zeros(
-            (10, 10, 3), dtype=np.uint8
-        )
+        coherence_manager.character_references["Naruto"] = np.zeros((10, 10, 3), dtype=np.uint8)
         with_reference = await coherence_manager.build_coherent_prompt(
             "Naruto eats ramen", ["Naruto"], sample_episode_context
         )
@@ -337,25 +314,20 @@ class TestVisualCoherenceSystem:
 
         # Assert
         assert isinstance(enhanced_prompt, str), "Should return string prompt"
-        assert len(enhanced_prompt) > len(
-            original_prompt
-        ), "Enhanced prompt should be longer"
-        assert (
-            original_prompt in enhanced_prompt
-        ), "Should preserve original scene content"
+        assert len(enhanced_prompt) > len(original_prompt), "Enhanced prompt should be longer"
+        assert original_prompt in enhanced_prompt, "Should preserve original scene content"
 
         # Check for consistency-specific enhancements
         enhanced_lower = enhanced_prompt.lower()
         if low_consistency_metrics.color_coherence_score < 0.6:
             assert any(
-                keyword in enhanced_lower
-                for keyword in ["color", "palette", "consistent colors"]
+                keyword in enhanced_lower for keyword in ["color", "palette", "consistent colors"]
             ), "Should address color coherence issues"
 
         if low_consistency_metrics.style_consistency_score < 0.6:
-            assert any(
-                keyword in enhanced_lower for keyword in ["style", "consistent style"]
-            ), "Should address style consistency issues"
+            assert any(keyword in enhanced_lower for keyword in ["style", "consistent style"]), (
+                "Should address style consistency issues"
+            )
 
     @pytest.mark.asyncio
     async def test_color_coherence_calculation_opencv(self, coherence_manager):
@@ -389,20 +361,16 @@ class TestVisualCoherenceSystem:
             mock_kmeans.return_value = (None, None, expected_colors)
 
             # Act - First image (establishes palette)
-            score_1 = await coherence_manager._calculate_color_coherence(
-                test_image, episode_id
-            )
+            score_1 = await coherence_manager._calculate_color_coherence(test_image, episode_id)
 
             # Assert first image
             assert score_1 == 1.0, "First image should establish palette with score 1.0"
-            assert (
-                episode_id in coherence_manager.episode_color_palettes
-            ), "Episode palette should be stored"
+            assert episode_id in coherence_manager.episode_color_palettes, (
+                "Episode palette should be stored"
+            )
 
             # Act - Second image (tests coherence)
-            score_2 = await coherence_manager._calculate_color_coherence(
-                test_image, episode_id
-            )
+            score_2 = await coherence_manager._calculate_color_coherence(test_image, episode_id)
 
             # Assert second image
             assert isinstance(score_2, float), "Should return float coherence score"
@@ -437,9 +405,7 @@ class TestVisualCoherenceSystem:
         # For first image of episode, should establish template
         episode_id = episode_context["episode_id"]
         if episode_id not in coherence_manager.style_templates:
-            assert (
-                style_score == 1.0
-            ), "First image should establish style with score 1.0"
+            assert style_score == 1.0, "First image should establish style with score 1.0"
 
     @pytest.mark.asyncio
     async def test_reference_data_management(self, coherence_manager, image_factory):
@@ -457,23 +423,21 @@ class TestVisualCoherenceSystem:
         image_path = image_factory(color=(10, 120, 200))
 
         # Act
-        await coherence_manager._update_reference_data(
-            image_path, characters, episode_context
-        )
+        await coherence_manager._update_reference_data(image_path, characters, episode_context)
 
         # Assert character references stored
         expected = cv2.imread(image_path)
         for char in characters:
-            assert (
-                char in coherence_manager.character_references
-            ), f"Character {char} should be stored in references"
+            assert char in coherence_manager.character_references, (
+                f"Character {char} should be stored in references"
+            )
             stored = coherence_manager.character_references[char]
-            assert isinstance(
-                stored, np.ndarray
-            ), f"Character {char} reference should be numpy array"
-            assert np.array_equal(
-                stored, expected
-            ), f"Character {char} reference should match the image on disk"
+            assert isinstance(stored, np.ndarray), (
+                f"Character {char} reference should be numpy array"
+            )
+            assert np.array_equal(stored, expected), (
+                f"Character {char} reference should match the image on disk"
+            )
 
         # A path that cannot be read must fail loudly - silently skipping the
         # update would leave the consistency feedback loop permanently inert.
@@ -501,9 +465,7 @@ class TestVisualCoherenceSystem:
         async def attempts_for(threshold: float) -> int:
             """Run one seeded episode at `threshold` and count generation calls."""
             generator = make_generator(color=(200, 40, 40))
-            manager = VisualCoherenceManager(
-                consistency_threshold=0.0, image_generator=generator
-            )
+            manager = VisualCoherenceManager(consistency_threshold=0.0, image_generator=generator)
             # Seed references/palette/style with the first accepted render
             await manager.generate_consistent_image(
                 "seed scene", sample_characters, sample_episode_context
@@ -519,12 +481,8 @@ class TestVisualCoherenceSystem:
             )
             return generator.call_count - 1  # discount the seeding render
 
-        assert (
-            await attempts_for(0.0) == 1
-        ), "A permissive threshold should accept the first render"
-        assert (
-            await attempts_for(0.99) == 3
-        ), "A strict threshold should exhaust the retry budget"
+        assert await attempts_for(0.0) == 1, "A permissive threshold should accept the first render"
+        assert await attempts_for(0.99) == 3, "A strict threshold should exhaust the retry budget"
 
     @pytest.mark.asyncio
     async def test_image_generation_integration(
@@ -542,9 +500,7 @@ class TestVisualCoherenceSystem:
         # Arrange
         prompt = "Test scene generation"
         generator = make_generator()
-        manager = VisualCoherenceManager(
-            consistency_threshold=0.0, image_generator=generator
-        )
+        manager = VisualCoherenceManager(consistency_threshold=0.0, image_generator=generator)
 
         # Act
         result = await manager.generate_consistent_image(
@@ -599,7 +555,6 @@ class TestVisualCoherenceSystem:
                 coherence_manager, "_calculate_character_similarity", return_value=0.9
             ) as mock_char,
         ):
-
             # Act
             metrics = await coherence_manager._evaluate_visual_consistency(
                 "/fake/image.png", episode_context, characters
@@ -618,8 +573,7 @@ class TestVisualCoherenceSystem:
             # Assert weighted overall score calculation
             expected_overall = (0.8 * 0.3) + (0.7 * 0.4) + (0.9 * 0.3)
             assert abs(metrics.overall_score - expected_overall) < 0.01, (
-                f"Overall score should be {expected_overall:.2f}, "
-                f"got {metrics.overall_score:.2f}"
+                f"Overall score should be {expected_overall:.2f}, got {metrics.overall_score:.2f}"
             )
 
     @pytest.mark.asyncio
@@ -636,9 +590,10 @@ class TestVisualCoherenceSystem:
         - Visual coherence scoring completes within 2s per image
         - Memory usage stays reasonable during processing
         """
-        import time
-        import psutil
         import gc
+        import time
+
+        import psutil
 
         # Arrange - a real image file, returned by an injected generator
         prompt = "Performance test scene"
@@ -647,9 +602,7 @@ class TestVisualCoherenceSystem:
         async def generator(_prompt: str) -> str:
             return image_path
 
-        manager = VisualCoherenceManager(
-            consistency_threshold=0.0, image_generator=generator
-        )
+        manager = VisualCoherenceManager(consistency_threshold=0.0, image_generator=generator)
 
         # Measure initial memory
         gc.collect()
@@ -672,12 +625,10 @@ class TestVisualCoherenceSystem:
 
         # Assert performance constraints
         assert processing_time < 2.0, (
-            f"Visual coherence should complete within 2s, "
-            f"took {processing_time:.3f}s"
+            f"Visual coherence should complete within 2s, took {processing_time:.3f}s"
         )
         assert memory_increase < 200, (
-            f"Memory increase should be reasonable, "
-            f"increased by {memory_increase:.1f}MB"
+            f"Memory increase should be reasonable, increased by {memory_increase:.1f}MB"
         )
         assert result == image_path, "Should return the generated image path"
 
@@ -735,9 +686,7 @@ class TestVisualCoherenceSystem:
         palette_3 = [[128, 128, 128], [64, 64, 64], [192, 192, 192]]  # Grayscale
 
         # Act
-        similarity_high = coherence_manager._compare_color_palettes(
-            palette_1, palette_2
-        )
+        similarity_high = coherence_manager._compare_color_palettes(palette_1, palette_2)
         similarity_low = coherence_manager._compare_color_palettes(palette_1, palette_3)
 
         # Assert
@@ -745,9 +694,9 @@ class TestVisualCoherenceSystem:
         assert isinstance(similarity_low, float), "Should return float similarity"
         assert 0.0 <= similarity_high <= 1.0, "Similarity should be in valid range"
         assert 0.0 <= similarity_low <= 1.0, "Similarity should be in valid range"
-        assert (
-            similarity_high > similarity_low
-        ), "Similar palettes should have higher similarity than different palettes"
+        assert similarity_high > similarity_low, (
+            "Similar palettes should have higher similarity than different palettes"
+        )
         assert similarity_high > 0.8, "Very similar palettes should score >0.8"
         assert similarity_low < 0.5, "Very different palettes should score <0.5"
 

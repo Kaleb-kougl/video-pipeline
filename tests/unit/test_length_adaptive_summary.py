@@ -94,9 +94,7 @@ class TestPromptCarriesAnalysisData:
         ``[Analysis data insertion here...]``, which is why it could not
         replace the fixed-length prompt.
         """
-        prompt = generator._generate_length_adaptive_prompt(
-            "Demon Slayer", 1, SEASON_ANALYSIS, 10
-        )
+        prompt = generator._generate_length_adaptive_prompt("Demon Slayer", 1, SEASON_ANALYSIS, 10)
 
         assert "[Analysis data insertion here...]" not in prompt
         assert "Tanjiro" in prompt

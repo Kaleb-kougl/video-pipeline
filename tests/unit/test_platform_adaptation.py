@@ -9,21 +9,18 @@ engagement prediction, and multi-platform batch export.
 Following TDD methodology - these tests should FAIL initially (RED phase).
 """
 
+from typing import Any
+
 import pytest
-import json
-from datetime import datetime
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Dict, List, Any
 
 # Import the module we're testing - will fail initially
 try:
+    from core.adaptive_quality_manager import QualityProfile
     from core.intelligent_format_adapter import (
+        EngagementPrediction,
         IntelligentFormatAdapter,
         PlatformConfig,
-        EngagementPrediction,
     )
-    from core.adaptive_quality_manager import QualityProfile
 except ImportError:
     # Expected to fail in RED phase
     pass
@@ -33,7 +30,7 @@ class TestIntelligentFormatAdapter:
     """Test suite for enhanced platform format adaptation."""
 
     @pytest.fixture
-    def sample_content(self) -> Dict[str, Any]:
+    def sample_content(self) -> dict[str, Any]:
         """Sample episode content for testing (>60s to test condensation)."""
         return {
             "scenes": [
@@ -100,9 +97,7 @@ class TestIntelligentFormatAdapter:
         # Arrange
         platform = "tiktok"
         total_duration = sum(scene["duration"] for scene in sample_content["scenes"])
-        assert (
-            total_duration > 60
-        ), "Sample content should exceed TikTok limit for testing"
+        assert total_duration > 60, "Sample content should exceed TikTok limit for testing"
 
         # Act
         adaptation_result = await format_adapter.adapt_content_for_platform(
@@ -111,15 +106,9 @@ class TestIntelligentFormatAdapter:
 
         # Assert structure
         assert "adapted_content" in adaptation_result, "Should contain adapted content"
-        assert (
-            "platform_optimized_hook" in adaptation_result
-        ), "Should contain optimized hook"
-        assert (
-            "engagement_prediction" in adaptation_result
-        ), "Should contain engagement prediction"
-        assert (
-            "adaptation_metadata" in adaptation_result
-        ), "Should contain adaptation metadata"
+        assert "platform_optimized_hook" in adaptation_result, "Should contain optimized hook"
+        assert "engagement_prediction" in adaptation_result, "Should contain engagement prediction"
+        assert "adaptation_metadata" in adaptation_result, "Should contain adaptation metadata"
 
         # Assert TikTok-specific adaptations
         adapted_content = adaptation_result["adapted_content"]
@@ -130,23 +119,15 @@ class TestIntelligentFormatAdapter:
 
         # Assert engagement prediction
         engagement = adaptation_result["engagement_prediction"]
-        assert isinstance(
-            engagement, EngagementPrediction
-        ), "Should return EngagementPrediction"
+        assert isinstance(engagement, EngagementPrediction), "Should return EngagementPrediction"
         assert 0.0 <= engagement.retention_rate <= 1.0, "Retention rate should be valid"
         assert 0.0 <= engagement.confidence_score <= 1.0, "Confidence should be valid"
 
         # Assert metadata
         metadata = adaptation_result["adaptation_metadata"]
-        assert (
-            metadata["original_duration"] == total_duration
-        ), "Should track original duration"
-        assert (
-            metadata["adapted_duration"] == adapted_duration
-        ), "Should track adapted duration"
-        assert (
-            metadata["compression_ratio"] > 1.0
-        ), "Should indicate compression occurred"
+        assert metadata["original_duration"] == total_duration, "Should track original duration"
+        assert metadata["adapted_duration"] == adapted_duration, "Should track adapted duration"
+        assert metadata["compression_ratio"] > 1.0, "Should indicate compression occurred"
 
     @pytest.mark.asyncio
     async def test_youtube_shorts_adaptation(
@@ -194,9 +175,9 @@ class TestIntelligentFormatAdapter:
             "strategy",
             "breakdown",
         ]
-        assert any(
-            keyword in hook_lower for keyword in informative_keywords
-        ), "YouTube Shorts hook should be informative"
+        assert any(keyword in hook_lower for keyword in informative_keywords), (
+            "YouTube Shorts hook should be informative"
+        )
 
         # Assert engagement prediction focuses on watch time
         engagement = adaptation_result["engagement_prediction"]
@@ -242,9 +223,9 @@ class TestIntelligentFormatAdapter:
             "breathtaking",
         ]
         hook_lower = hook.lower()
-        assert any(
-            keyword in hook_lower for keyword in aesthetic_keywords
-        ), "Instagram Reels hook should focus on aesthetics"
+        assert any(keyword in hook_lower for keyword in aesthetic_keywords), (
+            "Instagram Reels hook should focus on aesthetics"
+        )
 
         # Assert engagement prediction emphasizes shares
         engagement = adaptation_result["engagement_prediction"]
@@ -273,28 +254,24 @@ class TestIntelligentFormatAdapter:
         )
 
         # Assert
-        condensed_duration = sum(
-            scene["duration"] for scene in condensed_content["scenes"]
+        condensed_duration = sum(scene["duration"] for scene in condensed_content["scenes"])
+        assert condensed_duration <= target_duration + 2, (
+            f"Condensed duration {condensed_duration}s should be close to target {target_duration}s"
         )
-        assert (
-            condensed_duration <= target_duration + 2
-        ), f"Condensed duration {condensed_duration}s should be close to target {target_duration}s"
-        assert len(condensed_content["scenes"]) < len(
-            sample_content["scenes"]
-        ), "Should remove some scenes for major condensation"
+        assert len(condensed_content["scenes"]) < len(sample_content["scenes"]), (
+            "Should remove some scenes for major condensation"
+        )
 
         # Assert key scenes preserved (highest emotional intensity)
-        original_intensities = [
-            scene["emotional_intensity"] for scene in sample_content["scenes"]
-        ]
+        original_intensities = [scene["emotional_intensity"] for scene in sample_content["scenes"]]
         condensed_intensities = [
             scene["emotional_intensity"] for scene in condensed_content["scenes"]
         ]
 
         max_original_intensity = max(original_intensities)
-        assert (
-            max_original_intensity in condensed_intensities
-        ), "Should preserve scenes with highest emotional intensity"
+        assert max_original_intensity in condensed_intensities, (
+            "Should preserve scenes with highest emotional intensity"
+        )
 
     @pytest.mark.asyncio
     async def test_ai_content_condensation_minor(self, format_adapter, sample_content):
@@ -320,21 +297,19 @@ class TestIntelligentFormatAdapter:
         )
 
         # Assert
-        condensed_duration = sum(
-            scene["duration"] for scene in condensed_content["scenes"]
-        )
+        condensed_duration = sum(scene["duration"] for scene in condensed_content["scenes"])
         compression_ratio = original_duration / condensed_duration
 
-        assert (
-            1.2 <= compression_ratio <= 1.3
-        ), f"Should achieve ~20% compression, got {compression_ratio:.2f}x"
-        assert len(condensed_content["scenes"]) == len(
-            sample_content["scenes"]
-        ), "Minor condensation should preserve all scenes"
+        assert 1.2 <= compression_ratio <= 1.3, (
+            f"Should achieve ~20% compression, got {compression_ratio:.2f}x"
+        )
+        assert len(condensed_content["scenes"]) == len(sample_content["scenes"]), (
+            "Minor condensation should preserve all scenes"
+        )
 
         # Assert proportional reduction
         for original, condensed in zip(
-            sample_content["scenes"], condensed_content["scenes"]
+            sample_content["scenes"], condensed_content["scenes"], strict=False
         ):
             reduction_ratio = condensed["duration"] / original["duration"]
             assert 0.7 <= reduction_ratio <= 0.9, (
@@ -360,45 +335,37 @@ class TestIntelligentFormatAdapter:
 
         for platform in platforms:
             # Act
-            engagement = await format_adapter._predict_engagement(
-                sample_content, platform
-            )
+            engagement = await format_adapter._predict_engagement(sample_content, platform)
 
             # Assert structure
-            assert isinstance(
-                engagement, EngagementPrediction
-            ), f"Should return EngagementPrediction for {platform}"
+            assert isinstance(engagement, EngagementPrediction), (
+                f"Should return EngagementPrediction for {platform}"
+            )
 
             # Assert valid ranges
-            assert (
-                0.0 <= engagement.retention_rate <= 1.0
-            ), f"Retention rate should be valid for {platform}"
-            assert (
-                0.0 <= engagement.completion_rate <= 1.0
-            ), f"Completion rate should be valid for {platform}"
-            assert (
-                0.0 <= engagement.share_probability <= 1.0
-            ), f"Share probability should be valid for {platform}"
-            assert (
-                0.0 <= engagement.confidence_score <= 1.0
-            ), f"Confidence score should be valid for {platform}"
+            assert 0.0 <= engagement.retention_rate <= 1.0, (
+                f"Retention rate should be valid for {platform}"
+            )
+            assert 0.0 <= engagement.completion_rate <= 1.0, (
+                f"Completion rate should be valid for {platform}"
+            )
+            assert 0.0 <= engagement.share_probability <= 1.0, (
+                f"Share probability should be valid for {platform}"
+            )
+            assert 0.0 <= engagement.confidence_score <= 1.0, (
+                f"Confidence score should be valid for {platform}"
+            )
 
             # Platform-specific assertions
             if platform == "tiktok":
                 # TikTok prioritizes retention and viral content
-                assert (
-                    engagement.retention_rate > 0.0
-                ), "TikTok should predict retention"
+                assert engagement.retention_rate > 0.0, "TikTok should predict retention"
             elif platform == "youtube_shorts":
                 # YouTube focuses on completion rate
-                assert (
-                    engagement.completion_rate > 0.0
-                ), "YouTube should predict completion"
+                assert engagement.completion_rate > 0.0, "YouTube should predict completion"
             elif platform == "instagram_reels":
                 # Instagram focuses on shares and aesthetics
-                assert (
-                    engagement.share_probability > 0.0
-                ), "Instagram should predict shares"
+                assert engagement.share_probability > 0.0, "Instagram should predict shares"
 
     @pytest.mark.asyncio
     async def test_multi_platform_batch_export(
@@ -425,32 +392,31 @@ class TestIntelligentFormatAdapter:
 
         # Assert batch structure
         assert isinstance(batch_results, dict), "Should return results dictionary"
-        assert len(batch_results) == len(
-            target_platforms
-        ), "Should return results for all platforms"
+        assert len(batch_results) == len(target_platforms), (
+            "Should return results for all platforms"
+        )
 
         # Assert each platform adaptation
         for platform in target_platforms:
             assert platform in batch_results, f"Should contain results for {platform}"
 
             platform_result = batch_results[platform]
-            assert (
-                "adapted_content" in platform_result
-            ), f"Should contain adapted content for {platform}"
-            assert (
-                "engagement_prediction" in platform_result
-            ), f"Should contain engagement prediction for {platform}"
+            assert "adapted_content" in platform_result, (
+                f"Should contain adapted content for {platform}"
+            )
+            assert "engagement_prediction" in platform_result, (
+                f"Should contain engagement prediction for {platform}"
+            )
 
             # Check platform-specific constraints
             adapted_duration = sum(
-                scene["duration"]
-                for scene in platform_result["adapted_content"]["scenes"]
+                scene["duration"] for scene in platform_result["adapted_content"]["scenes"]
             )
 
             config = format_adapter.platform_configs[platform]
-            assert (
-                adapted_duration <= config.max_duration
-            ), f"{platform} content should respect duration limit {config.max_duration}s"
+            assert adapted_duration <= config.max_duration, (
+                f"{platform} content should respect duration limit {config.max_duration}s"
+            )
 
     @pytest.mark.asyncio
     async def test_platform_hook_generation(self, format_adapter):
@@ -485,9 +451,7 @@ class TestIntelligentFormatAdapter:
             assert (
                 "battle" in hook.lower()
                 or "epic" in hook.lower()
-                or any(
-                    char.lower() in hook.lower() for char in test_scene["characters"]
-                )
+                or any(char.lower() in hook.lower() for char in test_scene["characters"])
             ), f"Hook should relate to scene content for {style}"
 
             # Style-specific assertions
@@ -499,9 +463,9 @@ class TestIntelligentFormatAdapter:
                     "epic",
                     "insane",
                 ]
-                assert any(
-                    keyword in hook.lower() for keyword in viral_keywords
-                ), "Viral hook should use engaging language"
+                assert any(keyword in hook.lower() for keyword in viral_keywords), (
+                    "Viral hook should use engaging language"
+                )
             elif style == "informative":
                 info_keywords = [
                     "learn",
@@ -510,9 +474,9 @@ class TestIntelligentFormatAdapter:
                     "analysis",
                     "breakdown",
                 ]
-                assert any(
-                    keyword in hook.lower() for keyword in info_keywords
-                ), "Informative hook should be educational"
+                assert any(keyword in hook.lower() for keyword in info_keywords), (
+                    "Informative hook should be educational"
+                )
             elif style == "aesthetic":
                 aesthetic_keywords = [
                     "beautiful",
@@ -522,14 +486,12 @@ class TestIntelligentFormatAdapter:
                     "amazing",
                     "breathtaking",
                 ]
-                assert any(
-                    keyword in hook.lower() for keyword in aesthetic_keywords
-                ), "Aesthetic hook should emphasize visuals"
+                assert any(keyword in hook.lower() for keyword in aesthetic_keywords), (
+                    "Aesthetic hook should emphasize visuals"
+                )
 
     @pytest.mark.asyncio
-    async def test_platform_algorithm_optimization(
-        self, format_adapter, sample_content
-    ):
+    async def test_platform_algorithm_optimization(self, format_adapter, sample_content):
         """
         Test optimization for specific platform algorithms.
 
@@ -551,39 +513,36 @@ class TestIntelligentFormatAdapter:
             )
 
             # Assert
-            assert (
-                "scenes" in optimized_content
-            ), f"Should contain scenes for {focus} optimization"
-            assert (
-                len(optimized_content["scenes"]) > 0
-            ), f"Should maintain content for {focus} optimization"
+            assert "scenes" in optimized_content, f"Should contain scenes for {focus} optimization"
+            assert len(optimized_content["scenes"]) > 0, (
+                f"Should maintain content for {focus} optimization"
+            )
 
             # Focus-specific optimizations
             if focus == "retention":
                 # Should prioritize high-intensity scenes early
                 first_scene = optimized_content["scenes"][0]
-                assert (
-                    first_scene["emotional_intensity"] >= 0.8
-                ), "Retention optimization should lead with high-intensity content"
+                assert first_scene["emotional_intensity"] >= 0.8, (
+                    "Retention optimization should lead with high-intensity content"
+                )
 
             elif focus == "watch_time":
                 # Should maintain balanced pacing for completion
                 durations = [scene["duration"] for scene in optimized_content["scenes"]]
                 duration_variance = max(durations) - min(durations)
-                assert (
-                    duration_variance <= 6.0
-                ), "Watch time optimization should balance scene durations"
+                assert duration_variance <= 6.0, (
+                    "Watch time optimization should balance scene durations"
+                )
 
             elif focus == "shares":
                 # Should include highly shareable moments
                 total_intensity = sum(
-                    scene["emotional_intensity"]
-                    for scene in optimized_content["scenes"]
+                    scene["emotional_intensity"] for scene in optimized_content["scenes"]
                 )
                 avg_intensity = total_intensity / len(optimized_content["scenes"])
-                assert (
-                    avg_intensity >= 0.7
-                ), "Share optimization should maintain high emotional intensity"
+                assert avg_intensity >= 0.7, (
+                    "Share optimization should maintain high emotional intensity"
+                )
 
     @pytest.mark.asyncio
     async def test_content_analysis_and_scene_selection(self, format_adapter):
@@ -615,7 +574,6 @@ class TestIntelligentFormatAdapter:
             {"duration": 3.0, "emotional_intensity": 0.2, "characters": ["Background"]},
         ]
 
-        content = {"scenes": test_scenes}
         target_duration = 15  # Should select ~2-3 scenes
 
         # Act
@@ -625,23 +583,21 @@ class TestIntelligentFormatAdapter:
 
         # Assert
         selected_duration = sum(scene["duration"] for scene in selected_scenes)
-        assert (
-            selected_duration <= target_duration + 3
-        ), "Selected scenes should fit target duration"
+        assert selected_duration <= target_duration + 3, (
+            "Selected scenes should fit target duration"
+        )
         assert len(selected_scenes) < len(test_scenes), "Should select subset of scenes"
 
         # Assert selection quality
-        selected_intensities = [
-            scene["emotional_intensity"] for scene in selected_scenes
-        ]
+        selected_intensities = [scene["emotional_intensity"] for scene in selected_scenes]
         avg_selected_intensity = sum(selected_intensities) / len(selected_intensities)
 
         original_intensities = [scene["emotional_intensity"] for scene in test_scenes]
         avg_original_intensity = sum(original_intensities) / len(original_intensities)
 
-        assert (
-            avg_selected_intensity >= avg_original_intensity
-        ), "Selected scenes should have higher average emotional intensity"
+        assert avg_selected_intensity >= avg_original_intensity, (
+            "Selected scenes should have higher average emotional intensity"
+        )
 
     @pytest.mark.asyncio
     async def test_engagement_factors_analysis(self, format_adapter, sample_content):
@@ -657,14 +613,10 @@ class TestIntelligentFormatAdapter:
         - Analysis results inform prediction algorithms
         """
         # Act
-        engagement_factors = await format_adapter._analyze_engagement_factors(
-            sample_content
-        )
+        engagement_factors = await format_adapter._analyze_engagement_factors(sample_content)
 
         # Assert
-        assert isinstance(
-            engagement_factors, dict
-        ), "Should return engagement factors dict"
+        assert isinstance(engagement_factors, dict), "Should return engagement factors dict"
 
         required_factors = [
             "action_density",
@@ -676,12 +628,12 @@ class TestIntelligentFormatAdapter:
 
         for factor in required_factors:
             assert factor in engagement_factors, f"Should include {factor} in analysis"
-            assert isinstance(
-                engagement_factors[factor], (int, float)
-            ), f"{factor} should be numeric"
-            assert (
-                0.0 <= engagement_factors[factor] <= 1.0
-            ), f"{factor} should be normalized (0.0-1.0)"
+            assert isinstance(engagement_factors[factor], (int, float)), (
+                f"{factor} should be numeric"
+            )
+            assert 0.0 <= engagement_factors[factor] <= 1.0, (
+                f"{factor} should be normalized (0.0-1.0)"
+            )
 
     @pytest.mark.asyncio
     async def test_platform_configuration_validation(self, format_adapter):
@@ -699,28 +651,22 @@ class TestIntelligentFormatAdapter:
         # Assert required platforms exist
         required_platforms = ["tiktok", "youtube_shorts", "instagram_reels"]
         for platform in required_platforms:
-            assert (
-                platform in format_adapter.platform_configs
-            ), f"Should have configuration for {platform}"
+            assert platform in format_adapter.platform_configs, (
+                f"Should have configuration for {platform}"
+            )
 
             config = format_adapter.platform_configs[platform]
-            assert isinstance(
-                config, PlatformConfig
-            ), f"Should have PlatformConfig for {platform}"
+            assert isinstance(config, PlatformConfig), f"Should have PlatformConfig for {platform}"
 
             # Validate configuration parameters
-            assert (
-                config.max_duration > 0
-            ), f"{platform} should have positive max duration"
-            assert (
-                config.optimal_length > 0
-            ), f"{platform} should have positive optimal length"
-            assert (
-                config.optimal_length <= config.max_duration
-            ), f"{platform} optimal length should not exceed max duration"
-            assert (
-                config.aspect_ratio[0] > 0 and config.aspect_ratio[1] > 0
-            ), f"{platform} should have valid aspect ratio"
+            assert config.max_duration > 0, f"{platform} should have positive max duration"
+            assert config.optimal_length > 0, f"{platform} should have positive optimal length"
+            assert config.optimal_length <= config.max_duration, (
+                f"{platform} optimal length should not exceed max duration"
+            )
+            assert config.aspect_ratio[0] > 0 and config.aspect_ratio[1] > 0, (
+                f"{platform} should have valid aspect ratio"
+            )
 
         # Assert platform differences
         tiktok_config = format_adapter.platform_configs["tiktok"]
@@ -728,12 +674,8 @@ class TestIntelligentFormatAdapter:
         instagram_config = format_adapter.platform_configs["instagram_reels"]
 
         assert tiktok_config.hook_style == "viral", "TikTok should use viral hooks"
-        assert (
-            youtube_config.hook_style == "informative"
-        ), "YouTube should use informative hooks"
-        assert (
-            instagram_config.hook_style == "aesthetic"
-        ), "Instagram should use aesthetic hooks"
+        assert youtube_config.hook_style == "informative", "YouTube should use informative hooks"
+        assert instagram_config.hook_style == "aesthetic", "Instagram should use aesthetic hooks"
 
     @pytest.mark.asyncio
     async def test_performance_constraints_platform_adaptation(
@@ -750,9 +692,10 @@ class TestIntelligentFormatAdapter:
         - Concurrent platform processing works efficiently
         - Performance scales acceptably with content size
         """
-        import time
-        import psutil
         import gc
+        import time
+
+        import psutil
 
         # Arrange
         platforms = ["tiktok", "youtube_shorts", "instagram_reels"]
@@ -777,16 +720,12 @@ class TestIntelligentFormatAdapter:
 
         # Assert performance constraints
         assert processing_time < 30.0, (
-            f"Multi-platform adaptation should complete within 30s, "
-            f"took {processing_time:.1f}s"
+            f"Multi-platform adaptation should complete within 30s, took {processing_time:.1f}s"
         )
         assert memory_increase < 300, (
-            f"Memory increase should be reasonable, "
-            f"increased by {memory_increase:.1f}MB"
+            f"Memory increase should be reasonable, increased by {memory_increase:.1f}MB"
         )
-        assert len(batch_results) == len(
-            platforms
-        ), "Should successfully process all platforms"
+        assert len(batch_results) == len(platforms), "Should successfully process all platforms"
 
     def test_platform_config_data_structures(self, format_adapter):
         """

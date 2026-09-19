@@ -9,14 +9,15 @@ and prompt enhancement with character context.
 Following TDD methodology - these tests should FAIL initially (RED phase).
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 # Import the module we're testing - will fail initially
 try:
     from core.character_episode_enhancer import (
-        EpisodeCharacterEnhancer,
         CharacterWeight,
+        EpisodeCharacterEnhancer,
     )
 except ImportError:
     # Expected to fail in RED phase
@@ -57,9 +58,7 @@ class TestEpisodeCharacterEnhancer:
         )
 
     @pytest.mark.asyncio
-    async def test_character_weight_calculation_accuracy(
-        self, enhancer, sample_character_analysis
-    ):
+    async def test_character_weight_calculation_accuracy(self, enhancer, sample_character_analysis):
         """
         Test accurate character weight calculation from analysis data.
 
@@ -80,9 +79,9 @@ class TestEpisodeCharacterEnhancer:
 
         # Assert
         assert len(weights) == 2, "Should calculate weights for both characters"
-        assert all(
-            isinstance(w, CharacterWeight) for w in weights
-        ), "Should return CharacterWeight objects"
+        assert all(isinstance(w, CharacterWeight) for w in weights), (
+            "Should return CharacterWeight objects"
+        )
 
         # Find specific character weights
         naruto_weight = next((w for w in weights if w.character_name == "Naruto"), None)
@@ -92,23 +91,19 @@ class TestEpisodeCharacterEnhancer:
         assert sasuke_weight is not None, "Should find Sasuke's character weight"
 
         # Validate weight values
-        assert (
-            naruto_weight.importance_score == 0.9
-        ), "Naruto should have 0.9 importance score"
-        assert (
-            sasuke_weight.importance_score == 0.85
-        ), "Sasuke should have 0.85 importance score"
-        assert (
-            naruto_weight.character_development == 0.8
-        ), "Naruto should have 0.8 development factor"
-        assert (
-            sasuke_weight.character_development == 0.9
-        ), "Sasuke should have 0.9 development factor"
+        assert naruto_weight.importance_score == 0.9, "Naruto should have 0.9 importance score"
+        assert sasuke_weight.importance_score == 0.85, "Sasuke should have 0.85 importance score"
+        assert naruto_weight.character_development == 0.8, (
+            "Naruto should have 0.8 development factor"
+        )
+        assert sasuke_weight.character_development == 0.9, (
+            "Sasuke should have 0.9 development factor"
+        )
 
         # Validate ordering
-        assert (
-            naruto_weight.importance_score > sasuke_weight.importance_score
-        ), "Naruto should have higher importance than Sasuke"
+        assert naruto_weight.importance_score > sasuke_weight.importance_score, (
+            "Naruto should have higher importance than Sasuke"
+        )
 
     @pytest.mark.asyncio
     async def test_timing_adjustment_with_character_weights(self, enhancer):
@@ -131,27 +126,25 @@ class TestEpisodeCharacterEnhancer:
         ]
 
         # Act
-        adjusted_duration = enhancer._adjust_timing_for_characters(
-            base_duration, character_weights
-        )
+        adjusted_duration = enhancer._adjust_timing_for_characters(base_duration, character_weights)
 
         # Assert
         assert isinstance(adjusted_duration, float), "Should return float duration"
-        assert (
-            adjusted_duration > base_duration
-        ), "Duration should be extended for important characters"
-        assert (
-            1.5 <= adjusted_duration <= 15.0
-        ), "Adjusted duration should be within reasonable bounds"
+        assert adjusted_duration > base_duration, (
+            "Duration should be extended for important characters"
+        )
+        assert 1.5 <= adjusted_duration <= 15.0, (
+            "Adjusted duration should be within reasonable bounds"
+        )
 
         # Test with single low-importance character
         low_importance_weights = [CharacterWeight("Minor Character", 0.2, 0.1, 0.05)]
         low_adjusted_duration = enhancer._adjust_timing_for_characters(
             base_duration, low_importance_weights
         )
-        assert (
-            low_adjusted_duration <= adjusted_duration
-        ), "Low importance characters should get less time"
+        assert low_adjusted_duration <= adjusted_duration, (
+            "Low importance characters should get less time"
+        )
 
     @pytest.mark.asyncio
     async def test_prompt_enhancement_with_character_context(
@@ -179,23 +172,22 @@ class TestEpisodeCharacterEnhancer:
 
         # Assert
         assert isinstance(enhanced_prompt, str), "Should return string prompt"
-        assert len(enhanced_prompt) > len(
-            base_prompt
-        ), "Enhanced prompt should be longer than base prompt"
-        assert (
-            base_prompt in enhanced_prompt
-        ), "Enhanced prompt should contain original scene description"
+        assert len(enhanced_prompt) > len(base_prompt), (
+            "Enhanced prompt should be longer than base prompt"
+        )
+        assert base_prompt in enhanced_prompt, (
+            "Enhanced prompt should contain original scene description"
+        )
         assert "Naruto" in enhanced_prompt, "Should include Naruto's name"
         assert "Sasuke" in enhanced_prompt, "Should include Sasuke's name"
 
         # Check for personality trait inclusion
-        assert any(
-            trait in enhanced_prompt.lower()
-            for trait in ["determined", "brave", "kind"]
-        ), "Should include Naruto's personality traits"
-        assert any(
-            trait in enhanced_prompt.lower() for trait in ["intelligent", "confident"]
-        ), "Should include Sasuke's personality traits"
+        assert any(trait in enhanced_prompt.lower() for trait in ["determined", "brave", "kind"]), (
+            "Should include Naruto's personality traits"
+        )
+        assert any(trait in enhanced_prompt.lower() for trait in ["intelligent", "confident"]), (
+            "Should include Sasuke's personality traits"
+        )
 
     @pytest.mark.asyncio
     async def test_full_episode_enhancement_workflow(
@@ -221,51 +213,43 @@ class TestEpisodeCharacterEnhancer:
         # Assert episode structure
         assert isinstance(enhanced_episode, dict), "Should return episode dictionary"
         assert "scenes" in enhanced_episode, "Should contain scenes"
-        assert (
-            "character_focus" in enhanced_episode
-        ), "Should contain character focus data"
+        assert "character_focus" in enhanced_episode, "Should contain character focus data"
         assert "total_duration" in enhanced_episode, "Should contain total duration"
 
         # Assert scene enhancements
         enhanced_scenes = enhanced_episode["scenes"]
         original_scenes = sample_episode_content["scenes"]
 
-        assert len(enhanced_scenes) == len(
-            original_scenes
-        ), "Should maintain same number of scenes"
+        assert len(enhanced_scenes) == len(original_scenes), "Should maintain same number of scenes"
 
-        for i, (original, enhanced) in enumerate(zip(original_scenes, enhanced_scenes)):
+        for i, (original, enhanced) in enumerate(
+            zip(original_scenes, enhanced_scenes, strict=False)
+        ):
             # Check required enhancements
             assert "duration" in enhanced, f"Scene {i} should have enhanced duration"
-            assert (
-                "enhanced_prompt" in enhanced
-            ), f"Scene {i} should have enhanced prompt"
-            assert (
-                "character_weights" in enhanced
-            ), f"Scene {i} should have character weights"
+            assert "enhanced_prompt" in enhanced, f"Scene {i} should have enhanced prompt"
+            assert "character_weights" in enhanced, f"Scene {i} should have character weights"
 
             # Check that durations are adjusted (not equal to base_duration)
-            assert (
-                enhanced["duration"] != original["base_duration"]
-            ), f"Scene {i} duration should be adjusted from base duration"
+            assert enhanced["duration"] != original["base_duration"], (
+                f"Scene {i} duration should be adjusted from base duration"
+            )
 
             # Check character weights structure
             weights = enhanced["character_weights"]
             assert isinstance(weights, list), f"Scene {i} weights should be a list"
-            assert all(
-                isinstance(w, CharacterWeight) for w in weights
-            ), f"Scene {i} should contain CharacterWeight objects"
+            assert all(isinstance(w, CharacterWeight) for w in weights), (
+                f"Scene {i} should contain CharacterWeight objects"
+            )
 
         # Assert total duration calculation
         calculated_total = sum(scene["duration"] for scene in enhanced_scenes)
-        assert (
-            abs(enhanced_episode["total_duration"] - calculated_total) < 0.1
-        ), "Total duration should match sum of scene durations"
+        assert abs(enhanced_episode["total_duration"] - calculated_total) < 0.1, (
+            "Total duration should match sum of scene durations"
+        )
 
     @pytest.mark.asyncio
-    async def test_scene_character_identification(
-        self, enhancer, sample_episode_content
-    ):
+    async def test_scene_character_identification(self, enhancer, sample_episode_content):
         """
         Test identification of characters in individual scenes.
 
@@ -289,23 +273,15 @@ class TestEpisodeCharacterEnhancer:
         )
 
         # Assert
-        assert (
-            "Naruto" in multi_char_result
-        ), "Should identify Naruto in multi-character scene"
-        assert (
-            "Sasuke" in multi_char_result
-        ), "Should identify Sasuke in multi-character scene"
+        assert "Naruto" in multi_char_result, "Should identify Naruto in multi-character scene"
+        assert "Sasuke" in multi_char_result, "Should identify Sasuke in multi-character scene"
         assert len(multi_char_result) == 2, "Should identify exactly 2 characters"
 
-        assert (
-            "Sakura" in single_char_result
-        ), "Should identify Sakura in single-character scene"
+        assert "Sakura" in single_char_result, "Should identify Sakura in single-character scene"
         assert len(single_char_result) == 1, "Should identify exactly 1 character"
 
     @pytest.mark.asyncio
-    async def test_character_weight_edge_cases(
-        self, enhancer, sample_character_analysis
-    ):
+    async def test_character_weight_edge_cases(self, enhancer, sample_character_analysis):
         """
         Test character weight calculation edge cases.
 
@@ -322,18 +298,14 @@ class TestEpisodeCharacterEnhancer:
         weights_unknown = await enhancer._calculate_character_weights(
             unknown_characters, sample_character_analysis
         )
-        assert (
-            len(weights_unknown) == 0
-        ), "Unknown characters should return empty weights"
+        assert len(weights_unknown) == 0, "Unknown characters should return empty weights"
 
         # Test with empty character list
         empty_characters = []
         weights_empty = await enhancer._calculate_character_weights(
             empty_characters, sample_character_analysis
         )
-        assert (
-            len(weights_empty) == 0
-        ), "Empty character list should return empty weights"
+        assert len(weights_empty) == 0, "Empty character list should return empty weights"
 
         # Test with partial data
         partial_analysis = {
@@ -351,12 +323,8 @@ class TestEpisodeCharacterEnhancer:
         )
         assert len(weights_partial) == 1, "Should handle partial data"
         weight = weights_partial[0]
-        assert (
-            0.0 <= weight.importance_score <= 1.0
-        ), "Should clamp importance score to valid range"
-        assert (
-            0.0 <= weight.character_development <= 1.0
-        ), "Should clamp development to valid range"
+        assert 0.0 <= weight.importance_score <= 1.0, "Should clamp importance score to valid range"
+        assert 0.0 <= weight.character_development <= 1.0, "Should clamp development to valid range"
 
     @pytest.mark.asyncio
     async def test_timing_adjustment_constraints(self, enhancer):
@@ -398,14 +366,12 @@ class TestEpisodeCharacterEnhancer:
             medium_duration, high_importance_weights
         )
 
-        assert (
-            adjusted_high > adjusted_low
-        ), "High importance characters should get longer durations"
+        assert adjusted_high > adjusted_low, (
+            "High importance characters should get longer durations"
+        )
 
     @pytest.mark.asyncio
-    async def test_character_context_prompt_structure(
-        self, enhancer, sample_character_analysis
-    ):
+    async def test_character_context_prompt_structure(self, enhancer, sample_character_analysis):
         """
         Test structure and quality of character-enhanced prompts.
 
@@ -427,31 +393,25 @@ class TestEpisodeCharacterEnhancer:
         )
 
         # Assert prompt structure
-        assert (
-            "Epic battle scene" in enhanced_prompt
-        ), "Should preserve original scene description"
+        assert "Epic battle scene" in enhanced_prompt, "Should preserve original scene description"
 
         # Check character-specific enhancements
-        naruto_traits = sample_character_analysis["profiles"]["Naruto"][
-            "personality_traits"
-        ]
-        sasuke_traits = sample_character_analysis["profiles"]["Sasuke"][
-            "personality_traits"
-        ]
+        naruto_traits = sample_character_analysis["profiles"]["Naruto"]["personality_traits"]
+        sasuke_traits = sample_character_analysis["profiles"]["Sasuke"]["personality_traits"]
 
         enhanced_lower = enhanced_prompt.lower()
-        assert any(
-            trait in enhanced_lower for trait in naruto_traits
-        ), "Should include Naruto's personality traits"
-        assert any(
-            trait in enhanced_lower for trait in sasuke_traits
-        ), "Should include Sasuke's personality traits"
+        assert any(trait in enhanced_lower for trait in naruto_traits), (
+            "Should include Naruto's personality traits"
+        )
+        assert any(trait in enhanced_lower for trait in sasuke_traits), (
+            "Should include Sasuke's personality traits"
+        )
 
         # Check for visual consistency keywords
         consistency_keywords = ["consistent", "appearance", "style", "character design"]
-        assert any(
-            keyword in enhanced_lower for keyword in consistency_keywords
-        ), "Should include visual consistency instructions"
+        assert any(keyword in enhanced_lower for keyword in consistency_keywords), (
+            "Should include visual consistency instructions"
+        )
 
     @pytest.mark.asyncio
     async def test_episode_character_extraction(self, enhancer, sample_episode_content):
@@ -466,15 +426,13 @@ class TestEpisodeCharacterEnhancer:
         - Character list is properly formatted
         """
         # Act
-        episode_characters = await enhancer._extract_episode_characters(
-            sample_episode_content
-        )
+        episode_characters = await enhancer._extract_episode_characters(sample_episode_content)
 
         # Assert
         expected_characters = {"Naruto", "Sasuke", "Sakura"}
-        assert (
-            set(episode_characters) == expected_characters
-        ), f"Should extract all characters: {expected_characters}"
+        assert set(episode_characters) == expected_characters, (
+            f"Should extract all characters: {expected_characters}"
+        )
         assert len(episode_characters) == 3, "Should have exactly 3 unique characters"
 
     @pytest.mark.asyncio
@@ -491,9 +449,10 @@ class TestEpisodeCharacterEnhancer:
         - Memory usage stays reasonable
         - Processing scales with episode size
         """
-        import time
-        import psutil
         import gc
+        import time
+
+        import psutil
 
         # Measure initial memory
         gc.collect()
@@ -516,18 +475,16 @@ class TestEpisodeCharacterEnhancer:
         memory_increase = final_memory - initial_memory
 
         # Assert performance constraints
-        assert (
-            processing_time < 500
-        ), f"Character integration should complete within 500ms, took {processing_time:.1f}ms"
-        assert (
-            memory_increase < 100
-        ), f"Memory increase should be minimal, increased by {memory_increase:.1f}MB"
+        assert processing_time < 500, (
+            f"Character integration should complete within 500ms, took {processing_time:.1f}ms"
+        )
+        assert memory_increase < 100, (
+            f"Memory increase should be minimal, increased by {memory_increase:.1f}MB"
+        )
         assert enhanced_episode is not None, "Should successfully process episode"
 
     @pytest.mark.asyncio
-    async def test_error_handling_graceful_degradation(
-        self, enhancer, sample_episode_content
-    ):
+    async def test_error_handling_graceful_degradation(self, enhancer, sample_episode_content):
         """
         Test graceful error handling when character analysis is unavailable.
 
@@ -557,14 +514,12 @@ class TestEpisodeCharacterEnhancer:
                 sample_episode_content, malformed_analysis
             )
             # Should either work with defaults or raise appropriate exception
-            assert (
-                enhanced_episode is not None
-            ), "Should handle malformed analysis gracefully"
+            assert enhanced_episode is not None, "Should handle malformed analysis gracefully"
         except (KeyError, ValueError) as e:
             # Acceptable to raise specific exceptions for malformed data
-            assert "profiles" in str(e) or "character" in str(
-                e
-            ), "Should raise descriptive error about missing character data"
+            assert "profiles" in str(e) or "character" in str(e), (
+                "Should raise descriptive error about missing character data"
+            )
 
     @pytest.mark.asyncio
     async def test_character_weight_combination_logic(self, enhancer):
@@ -588,21 +543,17 @@ class TestEpisodeCharacterEnhancer:
             CharacterWeight("Support", 0.5, 0.4, 0.2),
             CharacterWeight("Minor", 0.2, 0.2, 0.1),
         ]
-        multiple_duration = enhancer._adjust_timing_for_characters(
-            3.0, multiple_weights
-        )
+        multiple_duration = enhancer._adjust_timing_for_characters(3.0, multiple_weights)
 
         # Test many characters (should handle efficiently)
         many_weights = [CharacterWeight(f"Char{i}", 0.3, 0.3, 0.1) for i in range(10)]
         many_duration = enhancer._adjust_timing_for_characters(3.0, many_weights)
 
         # Assert logical relationships
-        assert (
-            multiple_duration > single_duration
-        ), "Multiple important characters should extend duration more"
-        assert (
-            1.5 <= many_duration <= 15.0
-        ), "Many characters should still respect duration bounds"
+        assert multiple_duration > single_duration, (
+            "Multiple important characters should extend duration more"
+        )
+        assert 1.5 <= many_duration <= 15.0, "Many characters should still respect duration bounds"
 
 
 # Integration test placeholder (will be implemented in integration phase)

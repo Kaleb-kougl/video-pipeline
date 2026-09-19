@@ -81,9 +81,7 @@ class TestOrchestratorHasNoFakeGate:
 
         source = inspect.getsource(workflow_orchestrator)
         # Strip comments so the explanatory notes do not count as calls.
-        code = "\n".join(
-            line for line in source.splitlines() if not line.lstrip().startswith("#")
-        )
+        code = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
         assert "qa_agent.validate_content(" not in code
         assert "_quality_check" not in code
 
@@ -100,9 +98,7 @@ class TestQualityCoordinatorDeduplicatesIssues:
             recommendations = ["fix it", "fix it"]
 
         # Two stages both fail and both report the identical issue string.
-        coordinator.transcript_agent.validate_transcript_discovery = (
-            lambda *a, **k: _Report()
-        )
+        coordinator.transcript_agent.validate_transcript_discovery = lambda *a, **k: _Report()
         coordinator.workflow_agent.validate_workflow_execution = lambda *a, **k: _Report()
 
         report = coordinator.validate_complete_workflow(
