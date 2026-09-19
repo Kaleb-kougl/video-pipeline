@@ -12,6 +12,8 @@ from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 
+from utils.retry import with_http_retries
+
 logger = logging.getLogger(__name__)
 
 
@@ -192,8 +194,12 @@ class EpisodeDiscoveryAgent:
                     all_results.extend(results)
                     logger.info(f"Found {len(results)} results on {source_name}")
 
-            except Exception as e:
-                logger.error(f"Error searching {source_name}: {e}")
+            except Exception:
+                # Deliberately broad, and the only broad handler left on this
+                # path: one bad source must not abort a multi-source search.
+                # `logger.exception` preserves the traceback so anything that
+                # reaches here is still diagnosable rather than a one-line shrug.
+                logger.exception(f"Error searching {source_name}")
                 continue
 
         if not all_results:
@@ -239,7 +245,11 @@ class EpisodeDiscoveryAgent:
                 # Add delay between searches to be respectful
                 time.sleep(random.uniform(*self.delay_range))
 
-            except Exception as e:
+            except requests.exceptions.RequestException as e:
+                # A source that will not answer is the expected failure; the
+                # next query (or the next source) may still work. Narrowed from
+                # `except Exception` so a broken result parser is not reported
+                # as "that query found nothing".
                 logger.debug(f"Search query failed for '{query}' on {source_name}: {e}")
                 continue
 
@@ -320,43 +330,41 @@ class EpisodeDiscoveryAgent:
         logger.debug(f"Search URL: {search_url}")
         logger.debug(f"Search params: {search_params}")
 
-        # Perform search with retry logic
-        for attempt in range(self.retry_count):
-            try:
-                if attempt > 0:
-                    delay = random.uniform(*self.delay_range) * (2**attempt)
-                    time.sleep(delay)
+        def _attempt() -> list[dict[str, Any]]:
+            response = self.session.get(search_url, params=search_params, timeout=30)
+            response.raise_for_status()
 
-                response = self.session.get(search_url, params=search_params, timeout=30)
-                response.raise_for_status()
+            if not response.text:
+                logger.debug(f"Empty response from {source_name}")
+                return []
 
-                if not response.text:
-                    logger.debug(f"Empty response from {source_name}")
-                    continue
+            logger.debug(f"Got response from {source_name}, parsing...")
 
-                logger.debug(f"Got response from {source_name}, parsing...")
+            # Parse search results
+            soup = BeautifulSoup(response.text, "html.parser")
+            results: list[dict[str, Any]] = self._parse_search_results(
+                soup, source_config, source_name, season, episode
+            )
 
-                # Parse search results
-                soup = BeautifulSoup(response.text, "html.parser")
-                results = self._parse_search_results(
-                    soup, source_config, source_name, season, episode
-                )
+            if results:
+                logger.debug(f"Found {len(results)} results from {source_name}")
+            else:
+                logger.debug(f"No results parsed from {source_name}")
 
-                if results:
-                    logger.debug(f"Found {len(results)} results from {source_name}")
-                    return results
-                else:
-                    logger.debug(f"No results parsed from {source_name}")
+            return results
 
-            except requests.exceptions.RequestException as e:
-                logger.debug(f"Search request failed for '{query}' (attempt {attempt + 1}): {e}")
-                if attempt == self.retry_count - 1:
-                    break
-            except Exception as e:
-                logger.error(f"Unexpected error in search query: {e}")
-                break
-
-        return []
+        # Jittered exponential backoff, identical schedule to the loop this
+        # replaced. A parse failure is no longer caught here: it is a bug, not a
+        # transient network condition, and hiding it behind an empty result list
+        # is how "this source has nothing" and "our parser is broken" became
+        # indistinguishable.
+        return with_http_retries(
+            _attempt,
+            attempts=self.retry_count,
+            delay_range=self.delay_range,
+            logger=logger,
+            description=f"Search {source_name} for '{query}'",
+        )
 
     def _parse_search_results(
         self,

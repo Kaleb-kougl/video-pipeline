@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger(__name__)
 
 
-def get_html_content(url: str) -> str:
+def get_html_content(url: str) -> str | None:
     """
     Fetches the HTML content from a given URL.
     This function handles HTTP requests with proper error handling
@@ -21,7 +21,9 @@ def get_html_content(url: str) -> str:
         url (str): The URL of the webpage to fetch
 
     Returns:
-        str: The HTML content of the page, or None if an error occurs
+        The HTML content of the page, or None if the request failed. The
+        annotation says `str | None` because that is what it has always
+        returned; the old `-> str` was a type lie the callers had to guess at.
     """
     logger.debug(f"Retrieving HTML from: {url}")
     try:

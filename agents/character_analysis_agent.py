@@ -14,6 +14,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.exceptions import CharacterStoreError
+
 try:
     import chromadb
     from chromadb.config import Settings
@@ -606,7 +608,14 @@ class CharacterAnalysisAgent:
             )
 
         except Exception as e:
-            logger.error(f"Failed to store character profile for {profile.name}: {e}")
+            # Re-raised, not swallowed: this used to log and return, so
+            # `analyze_episode_characters` handed back a full set of profiles
+            # that had never reached the database. Every later season analysis,
+            # similarity search and development query then read an empty store
+            # and reported "no data" rather than "the writes failed".
+            raise CharacterStoreError(
+                f"Failed to store character profile for {profile.name} ({episode_key})"
+            ) from e
 
     def _store_character_interaction(self, interaction: CharacterInteraction):
         """Store character interaction in ChromaDB."""
@@ -651,7 +660,11 @@ class CharacterAnalysisAgent:
             )
 
         except Exception as e:
-            logger.error(f"Failed to store interaction: {e}")
+            # Same reasoning as _store_character_profile: a dropped interaction
+            # silently hollows out every relationship query built on top of it.
+            raise CharacterStoreError(
+                f"Failed to store interaction for {interaction.episode_key}"
+            ) from e
 
     def _update_character_relationships(
         self, profiles: dict[str, CharacterProfile], interactions: list[CharacterInteraction]
@@ -1551,7 +1564,11 @@ class CharacterAnalysisAgent:
             )
 
         except Exception as e:
-            logger.error(f"Failed to store season analysis: {e}")
+            # The caller (`analyze_season_development`) turns this into an
+            # explicit {"error": ...} result. Previously the write failed, the
+            # analysis was still returned as if persisted, and the next call
+            # recomputed it from scratch with no sign anything was wrong.
+            raise CharacterStoreError("Failed to store season analysis") from e
 
     def _calculate_introduction_significance(self, char_data: dict, episode_data: dict) -> float:
         """Calculate significance score for character introduction."""

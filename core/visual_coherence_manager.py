@@ -177,6 +177,42 @@ class VisualCoherenceManager:
 
         return self._create_enhanced_prompt(style_prompt, character_prompt, prompt, episode_context)
 
+    @staticmethod
+    def _require_episode_id(episode_context: dict[str, Any]) -> str:
+        """
+        Read the episode identifier that keys every piece of reference data.
+
+        ``episode_color_palettes`` and ``style_templates`` are keyed by this
+        value. It used to be read with ``episode_context.get("episode_id")``,
+        which returns ``None`` for a context that does not carry one - and
+        ``None`` is a perfectly good dict key. Every such episode therefore
+        shared a single ``None`` bucket: the first image to arrive established
+        "the" palette and style template, and every later image from an
+        unrelated episode was scored against it. Silently, with a plausible
+        number coming out the other end.
+
+        Args:
+            episode_context: Episode context supplied by the caller
+
+        Returns:
+            The non-empty episode identifier
+
+        Raises:
+            ValueError: If the context carries no usable ``episode_id``. Scoring
+                an image against another episode's palette is worse than not
+                scoring it at all, so this is a hard failure.
+        """
+        episode_id = episode_context.get("episode_id")
+
+        if not isinstance(episode_id, str) or not episode_id.strip():
+            raise ValueError(
+                "episode_context must carry a non-empty string 'episode_id': it keys the "
+                "per-episode colour palette and style template that consistency scoring "
+                f"compares against. Got {episode_id!r}."
+            )
+
+        return episode_id
+
     async def _evaluate_visual_consistency(
         self, image_path: str, episode_context: dict[str, Any], characters: list[str]
     ) -> VisualConsistencyMetrics:
@@ -192,17 +228,21 @@ class VisualCoherenceManager:
             VisualConsistencyMetrics with detailed scoring
 
         Raises:
-            ValueError: If image cannot be loaded
+            ValueError: If the image cannot be loaded, or the context carries no
+                ``episode_id`` to key the reference data by
         """
         # Load current image using OpenCV
         current_image = cv2.imread(image_path)
         if current_image is None:
             raise ValueError(f"Could not load image: {image_path}")
 
+        # Resolve the episode identity once, up front and outside every
+        # try/except, so a context with no episode_id fails loudly here rather
+        # than silently bucketing this episode under the `None` key.
+        episode_id = self._require_episode_id(episode_context)
+
         # Calculate individual consistency components
-        color_score = await self._calculate_color_coherence(
-            current_image, episode_context.get("episode_id")
-        )
+        color_score = await self._calculate_color_coherence(current_image, episode_id)
 
         style_score = await self._calculate_style_consistency(current_image, episode_context)
 
@@ -234,8 +274,20 @@ class VisualCoherenceManager:
             pixels = image.reshape(-1, 3).astype(np.float32)
             criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
 
-            # Perform k-means clustering to find 5 dominant colors
-            _, _, centers = cv2.kmeans(pixels, 5, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+            # Perform k-means clustering to find 5 dominant colors.
+            #
+            # Why the ignore below is a stubs artifact and not a bug: `bestLabels`
+            # is an InputOutputArray in OpenCV's C++ signature, and the Python
+            # binding documents `None` as "allocate the labels for me" - which is
+            # what every caller in the wild passes. opencv-python 5.0's bundled
+            # stubs type the parameter as a non-Optional array, so the overload
+            # cannot match. Passing a real array instead would mean fabricating a
+            # correctly shaped label buffer purely to satisfy the stub. Verified
+            # against the installed opencv-python 5.0.0: `None` returns a
+            # (n_pixels, 1) int32 label array and a (5, 3) float32 centre array.
+            _, _, centers = cv2.kmeans(  # type: ignore[call-overload]
+                pixels, 5, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS
+            )
 
             dominant_colors = centers.astype(int).tolist()
 
@@ -251,8 +303,13 @@ class VisualCoherenceManager:
                 self.logger.debug(f"Established color palette for {episode_id}")
                 return 1.0
 
-        except Exception as e:
-            self.logger.error(f"Error calculating color coherence: {e}")
+        except cv2.error as e:
+            # Only OpenCV's own failures are recoverable here: a degenerate
+            # image (fewer distinct pixels than clusters, an empty array) makes
+            # k-means fail, and a neutral 0.5 is a reasonable answer. Anything
+            # else - a TypeError, a KeyError - is a bug in this method and is
+            # left to propagate rather than being laundered into a score.
+            self.logger.error(f"OpenCV failed while calculating color coherence: {e}")
             return 0.5  # Fallback score
 
     async def _calculate_style_consistency(
@@ -267,8 +324,14 @@ class VisualCoherenceManager:
 
         Returns:
             Style consistency score (0.0-1.0)
+
+        Raises:
+            ValueError: If the context carries no ``episode_id``. Resolved
+                outside the try block below on purpose - a missing identifier is
+                a caller error, not an OpenCV hiccup, and must not be swallowed
+                into a 0.5 fallback.
         """
-        episode_id = episode_context.get("episode_id")
+        episode_id = self._require_episode_id(episode_context)
 
         try:
             # Extract style features (simplified - using edge detection and texture)
@@ -300,8 +363,8 @@ class VisualCoherenceManager:
                 self.logger.debug(f"Established style template for {episode_id}")
                 return 1.0
 
-        except Exception as e:
-            self.logger.error(f"Error calculating style consistency: {e}")
+        except cv2.error as e:
+            self.logger.error(f"OpenCV failed while calculating style consistency: {e}")
             return 0.5  # Fallback score
 
     async def _calculate_character_similarity(
@@ -340,8 +403,8 @@ class VisualCoherenceManager:
             avg_similarity = sum(similarities) / len(similarities)
             return avg_similarity
 
-        except Exception as e:
-            self.logger.error(f"Error calculating character similarity: {e}")
+        except cv2.error as e:
+            self.logger.error(f"OpenCV failed while calculating character similarity: {e}")
             return 0.5  # Fallback score
 
     def _compare_color_palettes(
@@ -472,8 +535,11 @@ class VisualCoherenceManager:
             similarity = (correlation * 0.6) + (structural_sim * 0.4)
             return max(0.0, min(1.0, similarity))
 
-        except Exception as e:
-            self.logger.error(f"Error comparing character features: {e}")
+        except cv2.error as e:
+            # resize/cvtColor/calcHist reject genuinely malformed arrays; that is
+            # a "these two images are not comparable" answer, i.e. 0.0. A bug in
+            # the arithmetic below is not, and now surfaces.
+            self.logger.error(f"OpenCV failed while comparing character features: {e}")
             return 0.0
 
     def _build_style_prompt(self, episode_context: dict[str, Any]) -> str:

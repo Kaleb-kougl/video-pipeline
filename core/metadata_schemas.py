@@ -44,10 +44,22 @@ class BaseMetadata:
             "created_at": self.created_at,
         }
 
-    @classmethod
-    def create(cls, show_name: str, season: int, episode: int) -> "BaseMetadata":
+    @staticmethod
+    def identity_fields(show_name: str, season: int, episode: int) -> dict[str, Any]:
         """
-        Create validated base metadata.
+        Build the canonical identity fields every metadata record shares.
+
+        This is deliberately *not* a polymorphic ``create()`` factory. Each
+        concrete subclass needs its own required arguments (a character name, a
+        list of interacting characters, ...), so a single inherited ``create()``
+        signature could only be honoured by every subclass violating it - which
+        is exactly what this hierarchy used to do, and why the module sat behind
+        a mypy ``ignore_errors``. Sharing the *fields* instead of the
+        *constructor* lets each class keep an honest, fully typed named
+        constructor.
+
+        A bare ``BaseMetadata`` is built with
+        ``BaseMetadata(**BaseMetadata.identity_fields(show, season, episode))``.
 
         Args:
             show_name: Show name to validate and canonicalize
@@ -55,20 +67,19 @@ class BaseMetadata:
             episode: Episode number
 
         Returns:
-            Validated BaseMetadata instance with canonical naming
+            Keyword arguments for the six identity fields, with the show name
+            canonicalized through the show registry
         """
-        canonical_name = show_registry.validate_show_name(show_name)
         show_id = show_registry.get_show_id(show_name)
-        episode_key = f"{show_id}_S{season}E{episode}"
 
-        return cls(
-            show_name=canonical_name,
-            show_id=show_id,
-            season=season,
-            episode=episode,
-            episode_key=episode_key,
-            created_at=datetime.now().isoformat(),
-        )
+        return {
+            "show_name": show_registry.validate_show_name(show_name),
+            "show_id": show_id,
+            "season": season,
+            "episode": episode,
+            "episode_key": f"{show_id}_S{season}E{episode}",
+            "created_at": datetime.now().isoformat(),
+        }
 
 
 @dataclass
@@ -127,15 +138,8 @@ class CharacterMetadata(BaseMetadata):
         Returns:
             Validated CharacterMetadata instance
         """
-        base = BaseMetadata.create(show_name, season, episode)
-
         return cls(
-            show_name=base.show_name,
-            show_id=base.show_id,
-            season=base.season,
-            episode=base.episode,
-            episode_key=base.episode_key,
-            created_at=base.created_at,
+            **cls.identity_fields(show_name, season, episode),
             character_name=character_name,
             canonical_character_name=character_name,  # For now, same as character_name
             dialogue_count=dialogue_count,
@@ -201,15 +205,8 @@ class InteractionMetadata(BaseMetadata):
         Returns:
             Validated InteractionMetadata instance
         """
-        base = BaseMetadata.create(show_name, season, episode)
-
         return cls(
-            show_name=base.show_name,
-            show_id=base.show_id,
-            season=base.season,
-            episode=base.episode,
-            episode_key=base.episode_key,
-            created_at=base.created_at,
+            **cls.identity_fields(show_name, season, episode),
             characters=json.dumps(characters),
             interaction_type=interaction_type,
             emotional_tone=emotional_tone,

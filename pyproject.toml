@@ -69,6 +69,8 @@ dependencies = [
     "orjson==3.11.1",
     
     # Utility Libraries
+    # Retry policy for the scraping agents (utils/retry.py). Also a
+    # transitive requirement of langchain-core, so it is present either way.
     "tenacity==9.1.2",
     "jsonpatch==1.33",
     "jsonpointer==3.0.0",
@@ -159,15 +161,6 @@ warn_return_any = false
 [[tool.mypy.overrides]]
 module = "core.*"
 disallow_untyped_defs = true
-
-# FOLLOW-UP: these two modules have pre-existing type errors that need real
-# fixes, not annotations:
-#   core.metadata_schemas       - `create()` overrides violate the base signature
-#   core.visual_coherence_manager - cv2.kmeans overload + Optional str used as
-#                                   a dict key / function argument
-[[tool.mypy.overrides]]
-module = ["core.metadata_schemas", "core.visual_coherence_manager"]
-ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

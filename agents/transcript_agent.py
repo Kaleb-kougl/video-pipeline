@@ -11,12 +11,10 @@ transcript discovery and parsing across multiple sources.
 """
 
 import logging
-import random
 import re
 
 # Import from the core module - we'll handle this with absolute imports
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -392,8 +390,12 @@ class TranscriptDiscoveryAgent:
                     all_results.append(result)
                     logger.info(f"Found on {source_name} (quality: {result['quality_score']:.2f})")
 
-            except Exception as e:
-                logger.error(f"Error searching {source_name}: {e}")
+            except Exception:
+                # Deliberately broad, and deliberately the *only* broad handler
+                # left on this path: one misbehaving source must not abort a
+                # multi-source search. `logger.exception` keeps the traceback so
+                # a bug that reaches here is still diagnosable.
+                logger.exception(f"Error searching {source_name}")
                 continue
 
         if not all_results:
@@ -442,7 +444,11 @@ class TranscriptDiscoveryAgent:
                 if result and result["quality_score"] > 0.3:  # Minimum quality threshold
                     return result
 
-            except Exception as e:
+            except requests.exceptions.RequestException as e:
+                # A URL that will not load is the *expected* failure here: the
+                # candidate URLs are guesses from naming patterns and most of
+                # them 404. Narrowed from `except Exception` so that a parser
+                # bug no longer masquerades as "this guess was wrong".
                 logger.debug(f"Failed to fetch {url}: {e}")
                 continue
 
@@ -451,53 +457,59 @@ class TranscriptDiscoveryAgent:
     def _fetch_and_parse_enhanced(
         self, url: str, source_config: dict[str, Any], source_name: str
     ) -> dict[str, Any] | None:
-        """Enhanced HTML fetching and Beautiful Soup parsing with Context7 best practices."""
+        """
+        Enhanced HTML fetching and Beautiful Soup parsing with Context7 best practices.
 
-        # Implement retry logic with exponential backoff
-        for attempt in range(self.retry_count):
-            try:
-                # Add random delay to avoid rate limiting
-                if attempt > 0:
-                    delay = random.uniform(*self.delay_range) * (2**attempt)
-                    time.sleep(delay)
+        Retries transient HTTP failures and empty bodies with jittered
+        exponential backoff (see ``utils.retry``). A parse failure is *not* a
+        transient error and is no longer swallowed: it propagates so the bug can
+        be fixed rather than reappearing as "this source has no transcript".
 
-                # Fetch HTML content
-                response = self.session.get(url, timeout=30)
-                response.raise_for_status()
+        Raises:
+            requests.exceptions.RequestException: If every attempt failed with a
+                transient HTTP error. The caller treats this as "this URL is not
+                available" and moves on to the next candidate.
+        """
 
-                html_content = response.text
-                if not html_content:
-                    continue
+        # Imported here rather than at module scope: this module only puts the
+        # project root on sys.path at import time (see the bootstrap above), so
+        # a top-level first-party import would be an E402 and would break the
+        # standalone-execution path the bootstrap exists to support.
+        from utils.retry import with_http_retries
 
-                # BEST PRACTICE 1: Explicit parser specification (Context7 recommendation)
-                # Use SoupStrainer for performance optimization on large documents
-                if len(html_content) > 100000:
-                    # Parse only relevant tags for better performance
-                    relevant_tags = SoupStrainer(
-                        ["h1", "h2", "h3", "div", "article", "main", "p", "span"]
-                    )
-                    soup = BeautifulSoup(html_content, "html.parser", parse_only=relevant_tags)
-                    logger.debug(
-                        f"Used SoupStrainer optimization for large document: {len(html_content)} chars"
-                    )
-                else:
-                    soup = BeautifulSoup(html_content, "html.parser")
+        def _attempt() -> dict[str, Any] | None:
+            # Fetch HTML content
+            response = self.session.get(url, timeout=30)
+            response.raise_for_status()
 
-                # Enhanced content extraction with multiple strategies
-                result = self._extract_content_enhanced(soup, source_config, url, source_name)
+            html_content = response.text
+            if not html_content:
+                return None
 
-                if result:
-                    return result
+            # BEST PRACTICE 1: Explicit parser specification (Context7 recommendation)
+            # Use SoupStrainer for performance optimization on large documents
+            if len(html_content) > 100000:
+                # Parse only relevant tags for better performance
+                relevant_tags = SoupStrainer(
+                    ["h1", "h2", "h3", "div", "article", "main", "p", "span"]
+                )
+                soup = BeautifulSoup(html_content, "html.parser", parse_only=relevant_tags)
+                logger.debug(
+                    f"Used SoupStrainer optimization for large document: {len(html_content)} chars"
+                )
+            else:
+                soup = BeautifulSoup(html_content, "html.parser")
 
-            except requests.exceptions.RequestException as e:
-                logger.warning(f"Request failed for {url} (attempt {attempt + 1}): {e}")
-                if attempt == self.retry_count - 1:
-                    break
-            except Exception as e:
-                logger.error(f"Unexpected error parsing {url}: {e}")
-                break
+            # Enhanced content extraction with multiple strategies
+            return self._extract_content_enhanced(soup, source_config, url, source_name)
 
-        return None
+        return with_http_retries(
+            _attempt,
+            attempts=self.retry_count,
+            delay_range=self.delay_range,
+            logger=logger,
+            description=f"Transcript fetch from {url}",
+        )
 
     def _extract_content_enhanced(
         self, soup: BeautifulSoup, source_config: dict[str, Any], url: str, source_name: str
