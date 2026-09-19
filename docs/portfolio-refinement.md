@@ -1,38 +1,35 @@
-# Portfolio Refinement Plan
+# Refactor record: the audit, what shipped, what is left
 
-Revised after three independent reviews (fact-check, hiring-manager, execution-feasibility).
-Every empirical claim below was verified by running a command, not by reading code.
+This is the history of the refactor, not a description of the system.
+**[architecture.md](architecture.md) describes the code as it is today** — if the
+two ever disagree, architecture.md is right and this file is stale.
 
-Goal: a repo a staff-level reviewer opens, trusts, and can run in one command.
+Part 1 is the audit of the tree as it was imported, kept as a record because the
+reasoning is the point. Part 2 maps each finding to the commit that closed it.
+Part 3 is the only forward-looking section: what is still broken or missing.
+
+Every claim about the past is checkable with `git show <sha>`; every claim about
+the present is checkable by running the command next to it.
 
 ---
 
-## The finding that reorders everything
+## Part 1 — The audit (`5877d72`, the tree as imported)
 
-**The code overstates what it does, and the tests are green because of it.**
+### 1. The code overstated what it did, and the tests were green because of it
 
-`core/visual_coherence_manager.py:568` — `_generate_with_ai`, the leaf of the entire
-606-line visual coherence subsystem:
+`core/visual_coherence_manager.py:568` — `_generate_with_ai`, the leaf of the
+606-line visual coherence subsystem — returned
+`f"/generated/consistent_image_{hash(enhanced_prompt) % 10000}.png"`: a path to a
+file that was never created. At the only call site
+(`agents/workflow_orchestrator.py:259`) the return value was assigned to
+`consistent_image_path` and then discarded; the next line appended
+`scene.get('enhanced_prompt', scene['prompt'])` instead. The retry loop and
+`_update_reference_data` (which `cv2.imread`s the fabricated path) were inert.
 
-```python
-# This would integrate with the existing image generation system
-# For now, return a mock path that tests can work with
-return f"/generated/consistent_image_{hash(enhanced_prompt) % 10000}.png"
-```
-
-It returns a path to a file that is never created. At the only call site,
-`agents/workflow_orchestrator.py:259`, the return value is assigned to
-`consistent_image_path` and then **discarded** — the next line appends
-`scene.get('enhanced_prompt', scene['prompt'])` instead. `create_images()` then runs on the
-plain prompts. The retry loop and `_update_reference_data` (which `cv2.imread`s the
-fabricated path) are both inert.
-
-All four tests in `tests/unit/test_visual_coherence.py` (lines 224, 446, 496, 611)
-`patch.object(..., "_generate_with_ai")` — they mock the one function that was never
-implemented and assert against the mock.
-
-And `README.md:18` and `README.md:99` claim **"60% improvement in visual consistency."**
-There is no mechanism that could produce that number.
+All four tests in `tests/unit/test_visual_coherence.py` patched
+`_generate_with_ai` — they mocked the one function that was never implemented and
+asserted against the mock. Meanwhile `README.md:18` and `README.md:99` claimed a
+**"60% improvement in visual consistency"** that no mechanism could produce.
 
 Second instance, `agents/parallel_image_generator.py:163`:
 
@@ -41,230 +38,184 @@ Second instance, `agents/parallel_image_generator.py:163`:
 if hasattr(self.ai_client.models.generate_content, "return_value"):
 ```
 
-Production code branching on whether it is under test.
+Production code branching on whether it was under test. Third instance: the
+platform exporters recorded successful exports in the database for video files
+they never wrote.
 
-A reviewer finds both of these in ten minutes, and after that stops trusting the other
-19,000 lines. **No amount of CI, typing, or dependency injection repairs this.** Integrity
-work comes first, and it is Phase 0.
+This reordered the whole plan. A reviewer finds these in ten minutes, and after
+that stops trusting the other 18,000 lines. No amount of CI, typing or dependency
+injection repairs it, so integrity work went first.
 
-## The second finding: nothing here runs
+### 2. Nothing here ran
 
-`.venv/pyvenv.cfg` records creation at `/Users/kkougl/Desktop/Personal/htmlParser` — a
-different home directory — and `.venv/bin/python` does not exist. The checked-in
-environment is dead.
+The checked-in `.venv` recorded creation under a different home directory and had
+no `python` binary. A clean install was broken independently:
+`core/visual_coherence_manager.py:10` did a module-level `import cv2`, and opencv
+appeared **zero times** in `pyproject.toml`, while
+`agents/workflow_orchestrator.py` imported `VisualCoherenceManager` at module
+level — so `pip install -e .` produced a package whose orchestrator raised
+`ImportError` on import. `requires-python` said `>=3.9` while `numpy==2.3.2`
+needs 3.11+.
 
-Worse, a clean install is broken: `core/visual_coherence_manager.py:10` does a module-level
-`import cv2`, and **opencv appears zero times in `pyproject.toml`**.
-`agents/workflow_orchestrator.py:15` imports `VisualCoherenceManager` at module level, so
-`pip install -e .` yields a package whose orchestrator raises `ImportError` on import.
-Additionally `requires-python = ">=3.9"` while `numpy==2.3.2` requires ≥3.11.
+### 3. Two of everything, and no way to tell which was real
 
----
+`main.py` (2,344 lines) was self-described DEPRECATED and called `sys.exit(1)` if
+run; `main_refactored.py` (2,035 lines) was the live entry point;
+`scripts/main copy.py` was a third. `[project.scripts]` pointed at
+`main_refactored:main`. `main_refactored.py:62` built a `DatabaseManager`, then
+line 81 called `WorkflowOrchestrator()` with no arguments, which built a **second**
+one at its own hardcoded path along with duplicate copies of six agents.
+`requirements.txt`, `pyproject.toml` and `requirements-vector.txt` disagreed on
+three packages. 23 markdown files under `docs/`, a 1,432-line README with zero
+images for a project whose entire output is video.
 
-## Phase 0 — Truth and a baseline (~1 day, blocking)
+### 4. No history, no gate, no seams
 
-1. **Rebuild the environment and run the suite.** `uv venv` on 3.11/3.12,
-   `uv pip install -r requirements.txt`, `pytest`. Record exactly what passes. Multi-GB
-   install (torch, chromadb, sentence-transformers, moviepy); budget half a day and expect
-   failures. Until this is done, nobody — including this document — knows what works.
-2. **Audit every capability claim in the README against something reproducible.** Delete
-   the "60% visual consistency" and "50% memory reduction" claims unless you can regenerate
-   them. Then: implement, delete, or explicitly label every stub. `_generate_with_ai` is
-   the known one; the audit is looking for its siblings.
-3. **Delete `parallel_image_generator.py:163`'s mock-detection branch.** Inject a fake
-   client in tests instead. This is the single most damaging twelve lines in the repo.
-4. **Rotate `GOOGLE_API_KEY` and `LANGSMITH_API_KEY`** in `.env`. It *is* gitignored, so
-   this is precautionary, not an active leak. Add a committed `.env.example`.
-5. **Fix the `.gitignore` doc-deletion bug BEFORE the first commit.** These patterns —
-   `*_PLAN.md`, `*_SUMMARY.md`, `*_GUIDE.md`, `*_IMPLEMENTATION*.md` — currently exclude
-   **15 of the 23 `.md` files under `docs/`**, including all of `docs/implementation-plans/`
-   and `docs/summaries/`. Remove the patterns; delete the process-exhaust docs deliberately
-   instead. Add the six root show directories, `htmlcov/`, `.coverage`, `.benchmarks/`,
-   `*.log`, `.venv/`.
-6. **`git init` and commit the tree AS-IS.** Then delete junk in subsequent commits.
-   Committing a pre-cleaned tree makes every later deletion unrecoverable and unbisectable.
-   (`My Hero Academia/` alone is 88 MB — purge it in commit 2, not before commit 1.)
-7. **Rename the directory** to `anime-video-generator`.
+Not a git repository. `pyproject.toml` configured black, isort and mypy with
+`disallow_untyped_defs = true` and nothing ran any of them. Zero
+`Protocol`/`ABC`/`abstractmethod` across the 12,304 lines of
+`agents/`+`core/`+`utils/`; 64 `except Exception` handlers; 30 `async def`s
+coexisting with blocking `requests.get` and `time.sleep` in request paths.
+
+And the staff-level omission: a nondeterministic LLM pipeline with **no golden
+set, no rubric, and no way to detect that a prompt change made the output worse.**
 
 ---
 
-## Phase 1 — One of everything (~0.5 day)
+## Part 2 — What shipped
 
-Delete `main.py` (2,344 lines, self-described DEPRECATED, `sys.exit(1)` if run — genuinely
-dead; the only reference is inside a print string at `tests/test_transcript_agent.py:219`).
-Delete `scripts/main copy.py`. Rename `main_refactored.py` → `main.py` and update
-`[project.scripts]`, which still points at `main_refactored:main`, plus the 20+ README
-invocations.
+| Finding | Resolved by |
+|---|---|
+| No version control | `5877d72` — imported as-is, so every later deletion is bisectable |
+| Fabricated "60%" / "50%" README claims | `21f2eae` |
+| Dead env, missing opencv, wrong `requires-python` | `584a358` (baseline recorded in [test-baseline.md](test-baseline.md)) |
+| Exporters recording successes for files never written | `bf53dd6` — they now `raise NotImplementedError` honestly |
+| Visual coherence stub | `36a2792` — `_generate_with_ai` delegates to an injected generator or raises |
+| Mock-detection branch in production code | `7116567` — `ParallelImageGenerator` deleted outright (dead and broken) |
+| 23 docs files | `8b23c2c` → 6 (8 today: `cli.md`, `evals.md` came later) |
+| Three entry points | `9ca8783` — one `main.py`; `main copy.py` and the old monolith deleted |
+| Script-style tests, flaky hash, unmarked network tests | `7c93c3b` — `conftest.py`, `network` marker |
+| 1,305-line README | `af19935` → 181 lines, CLI reference moved to [cli.md](cli.md) |
+| Nothing ran the linters | `438a58c` — CI, ruff, `mypy core`, pre-commit, Makefile |
+| Four latent bugs found by static analysis | `14f3404` |
+| Nothing a reviewer could run | `0e58b08` — `make demo` renders a real MP4 offline, no API key |
+| No quality gate on generation | `37614a1` — eval harness, rubric, committed baseline ([evals.md](evals.md)) |
+| Wrong-show transcripts, phantom coverage, character identity | `d2ac52b` |
+| Last declared lint exclusion | `b1670ec` |
+| Invented season lengths, silently-failing web search | `2971e15`, `93079d6` |
+| Orchestrator's 11 self-constructed collaborators | `e49717c` — all injectable, constructible with no network/key/DB |
 
-**Do not split the 2,035-line main.py yet** — that is not 0.5 day of *safe* work without a
-suite.
-
-Delete process exhaust: `docs/CLEANUP_SUMMARY.md`, `RESTRUCTURING_SUMMARY.md`,
-`REPOSITORY_ORGANIZATION_COMPLETE.md`, `AI_AGENT_EXECUTION_PROMPT.md`,
-`docs/AI_AGENT_PHASE2_IMPLEMENTATION_PROMPT.md`. Merge `PROJECT_STRUCTURE.md` +
-`DIRECTORY_STRUCTURE.md` + `README_MODULAR.md` into one `docs/architecture.md`.
-
-Fix `pyproject.toml`: `your-username` placeholder URLs, author "Anime Video Generator Team"
-(put your name on it), `requires-python` → `>=3.11`. Add a LICENSE file — MIT is claimed
-with no license present.
-
-**Reconcile dependencies to one source.** `requirements.txt` and `pyproject.toml` disagree
-today: `google-genai>=0.8.0` vs `google-generativeai==0.8.5`; `opencv-python` and `psutil`
-appear only in the txt (and opencv is a hard import). A third file,
-`requirements-vector.txt`, already exists with its own conflicting ranges
-(`chromadb>=0.4.0` vs the pinned `==1.0.15`).
-
----
-
-## Phase 2 — README and narrative (~0.5 day, highest payoff per hour)
-
-Deliberately before the refactor: the README can be made *truthful* now, and truth is the
-thing that's broken. 1,432 lines → ~150.
-
-1. **What it does, in two sentences, above the fold — with a GIF.** The README contains
-   **zero images** (`![` never appears) for a project whose entire output is video.
-2. **A Mermaid pipeline diagram.** Transcript discovery → content analysis → character
-   enrichment → image generation → render → platform export.
-3. **Engineering notes** — 3–4 real problems with real numbers: why image generation was
-   parallelized and the measured speedup, what content caching saves, what ChromaDB bought
-   over naive retrieval. Only numbers that survived the Phase 0 audit.
-4. Move the ~279 lines of CLI reference to `docs/cli.md`.
-5. Delete the status theater: "🎉 Status: Production Ready" (line 22), the eight `(NEW!)`
-   headings, "Recent Updates (August 2025)". Confident work doesn't announce itself.
-
-Defer `docs/architecture.md` and the ADRs until after Phase 4, or you'll write them twice.
+Verify with `make lint`, `make typecheck`, `make test`, `make demo`,
+`python evals/run_eval.py`.
 
 ---
 
-## Phase 3 — Tests, which do NOT require the refactor (~2 days)
+## Part 3 — What is still outstanding
 
-Correcting the previous draft: this does not depend on dependency injection.
-`tests/unit/` already contains **3,396 lines of real pytest** against `adaptive_quality`,
-`visual_coherence`, `platform_adaptation`, and `content_cache` — the exact modules
-previously listed as "newly target". Run them first and see what passes.
+### Correctness
 
-- **Do not delete the 17 script-style test files yet.** They are the only executable
-  description of `discovery_agent.py` (765 lines), `transcript_source_agent.py` (681),
-  `transcript_agent.py` (735), and `character_analysis_agent.py` (1,778) — none of which
-  have a `tests/unit/` counterpart. Run them, harvest the real assertions, *then* delete.
-- Add `conftest.py` with a fake LLM, in-memory DB, and canned transcript fixtures.
-- Extend coverage of the pure domain logic: `core/intelligent_format_adapter.py`, the
-  timing-ratio validators in `config/settings.py:54-59`.
-- Fill `tests/e2e/` with one fully-faked pipeline run, or delete it. `tests/e2e/` and
-  `tests/performance/` are both currently empty directories — promises the repo doesn't keep.
+- **`main.py:356` falls back to a hardcoded 12 episodes** when discovery returns
+  nothing. This is the sibling of the bug `2971e15` fixed in the discovery agent;
+  that commit did not touch `main.py`, so the invented season length survives at
+  the call site.
+- **Three test modules pass under pytest but fail as scripts** —
+  `tests/test_agents_fixed.py`, `test_season_processing.py`,
+  `test_transcript_source_agent.py`. Each has an `if __name__ == "__main__"` block
+  and a `sys.path` bootstrap that earns them an `E402` exclusion in
+  `pyproject.toml`. *(Being fixed concurrently — check `git log` before trusting
+  this entry.)*
+- **Two `FOLLOW-UP` ignores in `pyproject.toml`.** The `E402` per-file ignores go
+  away once the project is always installed. More seriously,
+  `core.metadata_schemas` and `core.visual_coherence_manager` sit behind
+  `ignore_errors = true` hiding five real type errors — `create()` overrides that
+  violate the base signature, a `cv2.kmeans` overload mismatch, and an `Optional`
+  str used as a dict key. These need fixes, not annotations.
+- **The eval is not wired into anything.** `docs/evals.md` says offline mode is
+  "what CI runs", but `.github/workflows/ci.yml` has no eval step and there is no
+  `make eval` target. The gate exists in the harness and nothing invokes it.
+- **The Dockerfile has never been built.** It says so in its own header. Derived
+  from a dependency set that was proven by building a clean venv, but unverified;
+  the stated image size is an estimate.
+- **The eval fixtures are hand-authored, not real captures.** `--mode live
+  --record` exists and has not been run; until it is, the golden set describes
+  outputs a model might plausibly produce rather than ones it did.
 
----
+### Structure
 
-## Phase 4 — CI and a runnable demo (~2–3 days)
+- **`main.py` is 2,265 lines and unsplit.** It absorbed the old
+  `main_refactored.py` and has grown since. Splitting it was deliberately
+  deferred until there was a suite; there is one now.
+- **Module-level moviepy imports** in `main.py` and
+  `agents/workflow_orchestrator.py` mean "instantiable in a test" still requires
+  import-level surgery.
+- **The media-render seam is patched, not injected.** `e49717c` made every agent
+  collaborator injectable, but `create_images` / `mp4_file_enhanced` /
+  `wave_file` are still module-level function calls that tests monkeypatch. That
+  is the last seam, and the one the demo depends on.
+- **The async decision is still unmade.** 27 `async def`s in
+  `agents/`+`core/` coexist with blocking `requests.get` and `time.sleep`. This is
+  a batch CLI; the recommendation stands — drop async rather than complete it.
+- **60 `except Exception` handlers** across `agents/`+`core/`+`utils/`. Not all
+  are wrong, but every one at an agent boundary should catch something specific or
+  re-raise a domain error.
+- **`tenacity==9.1.2` is pinned in both dependency files and imported nowhere**,
+  while three hand-rolled backoff loops remain. Low reviewer signal; cheap.
+- **`docs/CHARACTER_ANALYSIS_GUIDE.md`, `CONTENT_CACHING_GUIDE.md` and
+  `TRANSCRIPT_AGENT_GUIDE.md`** are the three survivors of the 23 and predate the
+  consolidation. They have not been audited against the current code.
 
-`pyproject.toml` configures black (line-length 100), isort, and mypy with
-`disallow_untyped_defs = true`, and **nothing runs any of them**.
+### Staff-level gaps
 
-1. **CI**: ruff + pytest on the subset that passes, Python 3.11/3.12. Badge it.
-2. **mypy: scope it to `core.*` from the start.** Corrected figure: by AST,
-   the shipped packages have **338 functions, 295 with return annotations — 43 missing, and
-   47 that would fail `disallow_untyped_defs`**. (The previous draft said "212 of 337, ~125
-   failing"; that came from a line-regex that missed this codebase's many multi-line
-   signatures, and overstated the work ~3x.) 47 is a day, not a week — but scope it anyway
-   and widen later.
-3. **Dockerfile + `make demo`** producing a real video from fixtures with a fake LLM and no
-   API key. Note `tests/fixtures/images/` and `videos/` are empty; you'll need real ones.
-4. **Move the ML stack to `[project.optional-dependencies] vector`** — but reconcile with
-   the existing `requirements-vector.txt` rather than adding a fourth dependency source,
-   and verify the optional path actually works. It currently doesn't:
-   `character_analysis_agent.py:18-31` guards chromadb behind `CHROMA_AVAILABLE`, while
-   `main_refactored.py:84-88` wraps `CharacterAnalysisAgent()` in `except ImportError` that
-   can never fire, because the class is imported at module top.
-5. **Keep the `==` pins. Generate a lockfile *from* them** (`uv lock`); un-pin one package
-   at a time after the suite is green. Loosening to `>=` with no passing tests would resolve
-   untested LangChain minors — and `init_chat_model` / `with_structured_output` are exactly
-   what breaks across 0.3.x.
+These are what separates a clean senior portfolio piece from a staff one. The
+eval harness (`37614a1`) closed the largest of them; these remain:
 
----
+- **Cost and latency budgets.** Tokens per video, p50/p95 wall clock, quota
+  behaviour. *(In progress — `core/telemetry.py` and orchestrator changes exist
+  in the working tree but are uncommitted as of `93079d6`; check `git log`.)*
+- **Failure semantics.** A season batch is long-running, expensive and partially
+  failing. Is it idempotent? Resumable? Does a crash at scene 7 of 12 cost the
+  run? SQLite is present but used as a log, not a state machine.
+- **Observability.** `LANGSMITH_API_KEY` appears in `.env.example` and nothing
+  reads it.
+- **ADRs.** There are none. The interesting ones are already written in commit
+  messages — async, the `core.*` typing beachhead, record/replay evals, deleting
+  `ParallelImageGenerator` rather than fixing it — and want extracting.
+- **The legal question.** Scraping fandom transcripts to generate derivative
+  anime video. "I hadn't thought about it" is a real ding in an interview.
+- **Naming.** Ten classes called `*Agent` that are sequential method calls — no
+  tool loop, no planner, no autonomy — are a pipeline. Calling them stages would
+  read as more sophisticated, not less.
 
-## Phase 5 — Architecture: seams (~5–8 days, and optional)
+### Blocked on the owner
 
-Do this only with a real time budget. **Half-done is strictly worse than not started**: three
-Protocols and one injected agent alongside nine self-constructing ones reads worse than one
-honest god object.
-
-The problem is larger than the previous draft stated. `agents/workflow_orchestrator.py:38-79`
-constructs **eleven collaborators** plus a DB and a model — not eight. And
-`main_refactored.py:62` builds a `DatabaseManager` from `settings.database_path`, then line
-81 calls `WorkflowOrchestrator()` with no arguments, which builds a **second** one at its
-own hardcoded `db_path="data/databases/video_generator.db"`, along with duplicate copies of
-six agents. DI here means untangling that duplication, not adding parameters. Every agent
-also imports `media.media_utils` (moviepy) at module level, so "instantiable in a test"
-requires import-level surgery too.
-
-- Zero `Protocol`/`ABC`/`abstractmethod` exist across `agents/core/utils` (12,304 lines).
-  Add protocols where a second implementation genuinely exists — the fake LLM and fake
-  renderer from Phase 4 — not as a checkbox.
-- **Drop async rather than completing it.** 30 `async def`s in `agents/`+`core/` coexist
-  with blocking `requests.get` (5 surviving call sites) and `time.sleep` in request paths
-  (`transcript_source_agent.py:215,509`, `discovery_agent.py:206,289,760`). This is a batch
-  CLI; only `parallel_image_generator.py` benefits, and a thread pool covers it. Completing
-  the async migration *and* DI simultaneously is the classic stall.
-- Narrow the blanket handlers: **64** `except Exception` handlers in `agents/core/utils`
-  (112 across all application code). Not all — but every one at an agent boundary should
-  catch something specific or re-raise a domain error.
-- Replace three hand-rolled backoff loops (`transcript_agent.py:385-391`,
-  `parallel_image_generator.py:244`, `discovery_agent.py:289`) with `tenacity`, already a
-  declared and entirely unused dependency. Low priority: near-zero reviewer signal.
-
----
-
-## What separates senior from staff here
-
-The plan above, fully executed, produces a clean senior portfolio piece. It is a hygiene
-plan, and hygiene is not what staff is assessed on. Missing entirely, from both the plan and
-the repo:
-
-- **An eval harness.** This is a nondeterministic LLM pipeline with no golden set, no
-  rubric, and no way to detect that a prompt change made output worse. That is the first
-  question a staff engineer asks about a system like this, and Phase 3 tests only the
-  deterministic parts.
-- **Cost and latency budgets.** Tokens per video, p50/p95 wall clock, quota behavior.
-- **Failure semantics.** A season batch is long-running, expensive, and partially failing.
-  Is it idempotent? Resumable? Does a crash at scene 7 of 12 cost the run? SQLite is present
-  but used as a log, not a state machine.
-- **Observability.** A `LANGSMITH_API_KEY` sits in `.env` and nothing uses it.
-- **A documented decision you'd now make differently.**
-- **The legal question**: scraping fandom transcripts to generate derivative anime video.
-  "I hadn't thought about it" is a real ding in an interview.
-
-One further note worth acting on: ten classes named `*Agent` that are sequential method
-calls — no tool loop, no planner, no autonomy — are a pipeline, not agents. Renaming them
-"stages" would read as more sophisticated, not less.
+- **Rotate `GOOGLE_API_KEY` and `LANGSMITH_API_KEY`.** `.env` is and always was
+  gitignored, so this is precautionary rather than an active leak — but the keys
+  predate the audit and have not been rotated.
+- **Decide what to do with 88 MB of generated show output.** `My Hero Academia/`
+  is gitignored and has never been committed. It is the only real end-to-end
+  output in existence and the only plausible source for the README demo GIF,
+  which is still a placeholder.
 
 ---
 
-## If you only have one weekend
+## Part 4 — Where the original plan was wrong
 
-1. Rebuild env, run pytest, record what passes. (~half a day; may consume the morning.)
-2. Rotate both API keys. (10 min)
-3. Fix the four `.gitignore` doc patterns; `git init`; commit as-is; second commit deletes
-   the 88 MB of generated output and the junk files.
-4. Delete `main.py` / `main copy.py` / the process-exhaust docs; rename
-   `main_refactored.py`; fix `[project.scripts]`, author, URLs; add LICENSE.
-   **Do not split main.py.** (~1.5 h)
-5. Kill the mock-detection branch at `parallel_image_generator.py:163` and either delete
-   the visual-coherence subsystem or label it unimplemented — and remove the "60%" claim
-   from the README either way. (~1 h)
-6. README → ~150 lines + GIF + Mermaid diagram + engineering notes; CLI to `docs/cli.md`.
-   (~4 h, highest payoff in the document.)
-7. CI: ruff + pytest on the passing subset. No mypy gate. Badge it. (~2 h)
+Kept because a plan that is never marked wrong was never really tested.
 
-Skip Phase 5 entirely, plus Docker, mypy, un-pinning, and ADRs.
-
----
-
-## The decision to make before anything else
-
-~19,500 lines of application code across ten agent modules and five manager classes is
-surface area a reviewer can question and you must defend. The right cut is not
-"fewer agents" — it's **one spine that is genuinely real end to end, everything else
-deleted or moved behind an honest "not implemented" boundary.** Breadth defended well beats
-depth; breadth with a decorative subsystem and a fabricated metric beats nothing.
-
-Make this call at step 0, because it determines what you delete in step 4.
+- **"The only reference to `main.py` is a print string at
+  `tests/test_transcript_agent.py:219`."** The line number was right and the
+  conclusion (it was dead) held, but it was not the only reference:
+  `docs/TRANSCRIPT_AGENT_GUIDE.md:52` and `:81` instructed readers to
+  `from main import TranscriptDiscoveryAgent`, and `scripts/migrate_structure.py`
+  referenced it four times. The deletion was safe; the survey behind it was not
+  thorough.
+- **"~19,500 lines of application code."** The actual figure at `5877d72` was
+  18,323 across `agents/`, `core/`, `utils/`, `media/`, `config/`, `validation/`
+  and both entry points. Overstated by about 6%.
+- **"Phase 3: ~2 days. Phase 5: ~5–8 days, and optional."** Tests and dependency
+  injection both landed, and the estimates were not the binding constraint —
+  the correctness fixes found *while* writing tests were. Four separate fix
+  commits (`14f3404`, `d2ac52b`, `2971e15`, `bf53dd6`) came out of work that was
+  nominally about coverage.
+- **"Rename the directory to `anime-video-generator`."** Never done. The repo is
+  still `htmlParser`, which is the first thing a reviewer sees.
