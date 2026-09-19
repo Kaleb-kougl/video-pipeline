@@ -81,7 +81,6 @@ class AnimeVideoGenerator:
         self.quality_agent = QualityAssuranceAgent()
         self.discovery_agent = EpisodeDiscoveryAgent()
         self.config_manager = EpisodeConfigManager()
-        self.orchestrator = WorkflowOrchestrator()
 
         # Initialize character analysis agent (optional)
         try:
@@ -90,6 +89,26 @@ class AnimeVideoGenerator:
         except ImportError:
             self.character_agent = None
             logger.info("Character analysis disabled (missing ChromaDB dependencies)")
+
+        # Hand the orchestrator the collaborators this process already owns.
+        # Built with no arguments it would construct a *second* DatabaseManager
+        # (at its own hardcoded path) plus duplicate copies of six agents and a
+        # second Gemini client, so a single process ended up with two databases
+        # and two agent sets. Injecting them keeps it to one of each. Anything
+        # this process could not build (e.g. `character_agent is None` when the
+        # ChromaDB extras are missing) is left out, and the orchestrator falls
+        # back to constructing it exactly as before.
+        self.orchestrator = WorkflowOrchestrator(
+            db=self.db,
+            model=self.model,
+            content_agent=self.content_agent,
+            video_agent=self.video_agent,
+            qa_agent=self.quality_agent,
+            discovery_agent=self.discovery_agent,
+            transcript_agent=self.transcript_agent,
+            config_manager=self.config_manager,
+            character_analysis_agent=self.character_agent,
+        )
 
         # Initialize vector search manager (optional)
         try:

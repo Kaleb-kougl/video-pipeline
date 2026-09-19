@@ -11,6 +11,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from core.protocols import CharacterAnalyzer
+
 
 @dataclass
 class CharacterWeight:
@@ -33,12 +35,13 @@ class EpisodeCharacterEnhancer:
     - Maintaining character development context throughout episodes
     """
 
-    def __init__(self, character_analyzer: Any, timing_calculator: Any) -> None:
+    def __init__(self, character_analyzer: CharacterAnalyzer, timing_calculator: Any) -> None:
         """
         Initialize the Episode Character Enhancer.
 
         Args:
-            character_analyzer: Character analysis agent for data retrieval
+            character_analyzer: Character analysis agent for data retrieval,
+                implementing :class:`core.protocols.CharacterAnalyzer`
             timing_calculator: Timing calculation utilities
         """
         self.character_analyzer = character_analyzer

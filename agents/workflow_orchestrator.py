@@ -20,6 +20,7 @@ from core.adaptive_quality_manager import AdaptiveQualityManager
 from core.character_episode_enhancer import EpisodeCharacterEnhancer
 from core.database import DatabaseManager
 from core.intelligent_format_adapter import IntelligentFormatAdapter
+from core.protocols import CharacterAnalyzer, ChatModel
 from core.schemas import Episode_Summary_Schema, ProcessingResult
 from core.visual_coherence_manager import VisualCoherenceManager
 from media.media_utils import create_images, mp4_file_enhanced, wave_file
@@ -36,46 +37,118 @@ class WorkflowOrchestrator:
     discovery through final video output, handling errors and state management.
     """
 
-    def __init__(self, db_path: str = "data/databases/video_generator.db"):
+    def __init__(
+        self,
+        db_path: str = "data/databases/video_generator.db",
+        *,
+        db: DatabaseManager | None = None,
+        model: ChatModel | None = None,
+        content_agent: Any | None = None,
+        video_agent: Any | None = None,
+        qa_agent: Any | None = None,
+        discovery_agent: Any | None = None,
+        transcript_agent: Any | None = None,
+        config_manager: Any | None = None,
+        character_analysis_agent: CharacterAnalyzer | None = None,
+        character_enhancer: Any | None = None,
+        visual_coherence: Any | None = None,
+        quality_manager: Any | None = None,
+        format_adapter: Any | None = None,
+    ):
         """
         Initialize all the necessary components and agents.
 
-        Sets up the complete ecosystem for video generation including
-        database, AI models, and all specialized agents.
+        Every collaborator may be injected. Each one left as ``None`` is built
+        here exactly as it always was, so ``WorkflowOrchestrator()`` behaves
+        identically to before; injection is purely additive. Supplying them all
+        (see ``tests/unit/test_orchestrator_injection.py``) makes the
+        orchestrator constructible with no network, no API key and no database
+        file, and lets a caller that already owns a ``DatabaseManager`` or a set
+        of agents share them instead of silently getting a second copy.
 
         Args:
-            db_path (str): Path to the SQLite database file for storing episode data
+            db_path (str): Path to the SQLite database file. Ignored when ``db``
+                is supplied.
+            db: An existing database manager to share.
+            model: A chat model implementing
+                :class:`core.protocols.ChatModel`. When omitted, Gemini is
+                initialised as before.
+            content_agent: Content extraction/analysis collaborator.
+            video_agent: Video and image generation collaborator.
+            qa_agent: Quality control collaborator.
+            discovery_agent: Episode URL discovery collaborator.
+            transcript_agent: Transcript extraction collaborator.
+            config_manager: Episode configuration collaborator.
+            character_analysis_agent: A character analyser implementing
+                :class:`core.protocols.CharacterAnalyzer`.
+            character_enhancer: Character-aware timing collaborator.
+            visual_coherence: Visual coherence collaborator.
+            quality_manager: Adaptive quality collaborator.
+            format_adapter: Platform format collaborator.
         """
         # Core infrastructure components
-        self.db = DatabaseManager(db_path)  # Database operations
+        self.db = db if db is not None else DatabaseManager(db_path)  # Database operations
 
         # Initialize AI model with error handling
-        try:
-            self.model = init_chat_model(
-                "gemini-2.0-flash", model_provider="google_genai"
-            )  # AI model
-        except Exception as e:
-            logger.warning(f"AI model not available: {e}")
-            self.model = None
+        if model is not None:
+            self.model = model
+        else:
+            try:
+                self.model = init_chat_model(
+                    "gemini-2.0-flash", model_provider="google_genai"
+                )  # AI model
+            except Exception as e:
+                logger.warning(f"AI model not available: {e}")
+                self.model = None
 
         # Specialized agent instances for different aspects of video generation
-        self.content_agent = (
-            ContentAgent(self.model) if self.model else None
-        )  # Content analysis and generation
-        self.video_agent = VideoGenerationAgent()  # Video and image generation
-        self.qa_agent = QualityAssuranceAgent()  # Quality control and validation
-        self.discovery_agent = EpisodeDiscoveryAgent()  # URL discovery and validation
-        self.transcript_agent = TranscriptDiscoveryAgent()  # Transcript extraction
-        self.config_manager = EpisodeConfigManager()  # Configuration management
+        if content_agent is not None:
+            self.content_agent = content_agent
+        else:
+            self.content_agent = (
+                ContentAgent(self.model) if self.model else None
+            )  # Content analysis and generation
+        self.video_agent = (
+            video_agent if video_agent is not None else VideoGenerationAgent()
+        )  # Video and image generation
+        self.qa_agent = (
+            qa_agent if qa_agent is not None else QualityAssuranceAgent()
+        )  # Quality control and validation
+        self.discovery_agent = (
+            discovery_agent if discovery_agent is not None else EpisodeDiscoveryAgent()
+        )  # URL discovery and validation
+        self.transcript_agent = (
+            transcript_agent if transcript_agent is not None else TranscriptDiscoveryAgent()
+        )  # Transcript extraction
+        self.config_manager = (
+            config_manager if config_manager is not None else EpisodeConfigManager()
+        )  # Configuration management
 
         # Phase 2 Quality Enhancement components
-        self.character_analysis_agent = CharacterAnalysisAgent()  # Character analysis with ChromaDB
-        self.character_enhancer = EpisodeCharacterEnhancer(
-            character_analyzer=self.character_analysis_agent, timing_calculator=self.video_agent
+        self.character_analysis_agent = (
+            character_analysis_agent
+            if character_analysis_agent is not None
+            else CharacterAnalysisAgent()  # Character analysis with ChromaDB
         )
-        self.visual_coherence = VisualCoherenceManager(consistency_threshold=0.8)
-        self.quality_manager = AdaptiveQualityManager()
-        self.format_adapter = IntelligentFormatAdapter()
+        self.character_enhancer = (
+            character_enhancer
+            if character_enhancer is not None
+            else EpisodeCharacterEnhancer(
+                character_analyzer=self.character_analysis_agent,
+                timing_calculator=self.video_agent,
+            )
+        )
+        self.visual_coherence = (
+            visual_coherence
+            if visual_coherence is not None
+            else VisualCoherenceManager(consistency_threshold=0.8)
+        )
+        self.quality_manager = (
+            quality_manager if quality_manager is not None else AdaptiveQualityManager()
+        )
+        self.format_adapter = (
+            format_adapter if format_adapter is not None else IntelligentFormatAdapter()
+        )
 
         # Structured output model for consistent data format
         self.model_with_structure = (
