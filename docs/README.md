@@ -10,6 +10,15 @@ the code as it was.
 | **[architecture.md](architecture.md)** | How the system is put together, stage by stage, with a per-stage table saying plainly which stages work and which are scaffolding. **This is the authority on current state** — if any other file disagrees with it, it is right and the other file is stale. |
 | **[cli.md](cli.md)** | Every command registered in `main.py`, with arguments and flags. |
 
+## Running it
+
+| File | What it is |
+|---|---|
+| **[runbook.md](runbook.md)** | Normal operating procedures: one episode, a season batch, exactly what `--resume` guarantees, how to read `stats --run <id>` and the telemetry stage table, and what the offline demo does and does not exercise. |
+| **[troubleshooting.md](troubleshooting.md)** | The failure modes that have actually happened, as symptom → cause → action. `WebSearchUnavailable` versus "found nothing", missing ChromaDB extras, a dead `.venv`, ffmpeg, quota exhaustion, unimplemented platform export, hanging tests. |
+| **[operations.md](operations.md)** | What a run costs in API calls per episode, what `core/telemetry.py` does and does not measure, why no price table ships, and how to supply one. |
+| **[data-model.md](data-model.md)** | The SQLite schema table by table: what writes each column and when, the `PRAGMA user_version` migration policy, run identity, and the retention story. |
+
 ## Decisions
 
 | File | What it is |
