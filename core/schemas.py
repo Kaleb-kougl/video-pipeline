@@ -22,6 +22,77 @@ class TaskStatus(Enum):
     FAILED = "failed"
 
 
+class EpisodeStatus(Enum):
+    """
+    Where one episode stands in a season run.
+
+    This is the state machine the ``episodes.status`` column records. It is
+    deliberately *not* :class:`TaskStatus`: that enum describes an in-memory
+    task object, while these four values are persisted and are what a resumed
+    run reads to decide whether an episode still needs its paid work done.
+
+    Only :data:`SUCCEEDED` means "do not do this again". :data:`IN_PROGRESS` is
+    what a crashed run leaves behind - the process died between starting the
+    episode and recording an outcome, so nothing may be assumed about how far
+    it got, and a resume retries it.
+    """
+
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class RunStatus(Enum):
+    """
+    Where one season run stands.
+
+    :data:`RUNNING` is also what a crashed run is left as - a process that dies
+    cannot write its own epitaph, so "running" on a run nothing is working on
+    is exactly the signal ``--resume`` looks for.
+    """
+
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    PARTIAL = "partial"
+    FAILED = "failed"
+
+
+class EpisodeOutcome(BaseModel):
+    """What happened to one episode inside a season run."""
+
+    episode: int = Field(description="Episode number")
+    status: EpisodeStatus = Field(description="Terminal state of this episode in this run")
+    skipped: bool = Field(
+        default=False,
+        description="True when a resumed run found this episode already succeeded and did no work",
+    )
+    attempts: int = Field(default=0, description="Total recorded attempts across all runs")
+    error: str | None = Field(default=None, description="Failure reason, when it failed")
+
+
+class SeasonRunReport(BaseModel):
+    """
+    The outcome of one (possibly resumed) season batch.
+
+    ``skipped`` is the number the whole feature exists for: episodes a resumed
+    run recognised as already finished and did not pay for again.
+    """
+
+    run_id: str = Field(description="Identity of this run; a resumed run reuses it")
+    show: str = Field(description="Show name")
+    season: int = Field(description="Season number")
+    resumed: bool = Field(default=False, description="Whether this run continued an earlier one")
+    status: RunStatus = Field(description="Terminal state of the run")
+    requested: int = Field(description="Episodes in the requested range")
+    succeeded: int = Field(description="Episodes that finished successfully in this run")
+    failed: int = Field(description="Episodes that failed in this run")
+    skipped: int = Field(default=0, description="Episodes already complete, so not re-run")
+    episodes: list[EpisodeOutcome] = Field(
+        default_factory=list, description="Per-episode outcomes in requested order"
+    )
+
+
 @dataclass
 class ProcessingTask:
     """

@@ -173,7 +173,40 @@ class WorkflowOrchestrator:
 
         logger.info("WorkflowOrchestrator initialized with all agents")
 
-    async def process_episode(self, url: str, show_name: str) -> dict[str, Any]:
+    # ------------------------------------------------------------------
+    # Run identity
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _job_id(label: str, run_id: str | None) -> str:
+        """
+        Name this unit of work.
+
+        With no ``run_id`` the historical timestamped form is kept, so a
+        one-off call reads exactly as it always did. Inside a season batch the
+        job is named under the run instead, which is what makes a resumed run's
+        telemetry and episode rows attributable to the *same* run rather than
+        to a second one that merely looks similar.
+        """
+        return f"{run_id}/{label}" if run_id else f"{label}_{datetime.now().isoformat()}"
+
+    def _record_telemetry(self, run_id: str | None = None) -> None:
+        """
+        Persist this run's telemetry report to ``run_telemetry``.
+
+        Called from the same ``finally`` that emits the report, so a failed run
+        is recorded too - its stage timings are the interesting ones. Storage
+        failures are swallowed by the database layer: telemetry must never be
+        able to fail a pipeline run.
+        """
+        try:
+            self.db.save_run_telemetry(self.telemetry.to_dict(), run_id)
+        except Exception as e:  # noqa: BLE001 - never fail a run over telemetry
+            logger.warning(f"Could not persist run telemetry: {e}")
+
+    async def process_episode(
+        self, url: str, show_name: str, run_id: str | None = None
+    ) -> dict[str, Any]:
         """
         The main method to process an episode, from content extraction to media generation.
         This is the central orchestration method that coordinates all agents to transform
@@ -182,12 +215,15 @@ class WorkflowOrchestrator:
         Args:
             url (str): The URL of the episode transcript to process
             show_name (str): The name of the anime show for context and branding
+            run_id (str, optional): Identity of the season run this episode
+                belongs to. Supplied by a batch so the work is attributable to
+                that run; ``None`` for a standalone call.
 
         Returns:
             dict: Result dictionary with success status, job ID, and either data or error message
         """
         # Generate unique job identifier for tracking and logging
-        job_id = f"{show_name}_{datetime.now().isoformat()}"
+        job_id = self._job_id(show_name, run_id)
         self.telemetry.start_run(job_id)
 
         try:
@@ -264,6 +300,7 @@ class WorkflowOrchestrator:
             # report is published either way.
             self.telemetry.end_run()
             self.telemetry.emit()
+            self._record_telemetry(run_id)
 
     def generate_structured_summary(
         self, content_result: dict[str, Any], show_name: str
@@ -493,6 +530,7 @@ class WorkflowOrchestrator:
         episode: int,
         episode_title: str = None,
         db: DatabaseManager = None,
+        run_id: str | None = None,
     ) -> ProcessingResult:
         """
         Complete episode processing by season and episode numbers using transcript discovery.
@@ -506,6 +544,8 @@ class WorkflowOrchestrator:
             episode (int): Episode number within the season
             episode_title (str, optional): Episode title for better discovery
             db (DatabaseManager, optional): Database instance to use
+            run_id (str, optional): Identity of the season run this episode
+                belongs to, so a resumed run's work stays attributable to it.
 
         Returns:
             ProcessingResult: Processing result with success status and data/error
@@ -513,7 +553,7 @@ class WorkflowOrchestrator:
         logger.info(f"Starting complete processing for {show_name} S{season}E{episode}")
 
         # Generate unique job identifier for tracking
-        job_id = f"{show_name}_S{season}E{episode}_{datetime.now().isoformat()}"
+        job_id = self._job_id(f"{show_name}_S{season}E{episode}", run_id)
         self.telemetry.start_run(job_id)
 
         try:
@@ -608,14 +648,21 @@ class WorkflowOrchestrator:
             return ProcessingResult(success=False, job_id=job_id, error=str(e))
 
         finally:
-            # `ProcessingResult` has no telemetry field (core/schemas.py is not
-            # changed here), so the report reaches callers two ways: printed /
-            # logged by `emit()`, and on `orchestrator.telemetry` afterwards.
+            # `ProcessingResult` still has no telemetry field, so the report
+            # reaches callers two ways: printed / logged by `emit()`, and on
+            # `orchestrator.telemetry` afterwards.
+            # It is also durable now: `_record_telemetry` files it under this
+            # job id in `run_telemetry`.
             self.telemetry.end_run()
             self.telemetry.emit()
+            self._record_telemetry(run_id)
 
     async def process_episode_from_url(
-        self, url: str, show_name: str, db: DatabaseManager = None
+        self,
+        url: str,
+        show_name: str,
+        db: DatabaseManager = None,
+        run_id: str | None = None,
     ) -> ProcessingResult:
         """
         Process episode from a direct transcript URL.
@@ -627,6 +674,8 @@ class WorkflowOrchestrator:
             url (str): Direct URL to the episode transcript
             show_name (str): Name of the anime show for context
             db (DatabaseManager, optional): Database instance to use
+            run_id (str, optional): Identity of the season run this episode
+                belongs to, so a resumed run's work stays attributable to it.
 
         Returns:
             ProcessingResult: Processing result with success status and data/error
@@ -634,7 +683,7 @@ class WorkflowOrchestrator:
         logger.info(f"Starting URL-based processing for {show_name}: {url}")
 
         # Generate unique job identifier for tracking
-        job_id = f"{show_name}_URL_{datetime.now().isoformat()}"
+        job_id = self._job_id(f"{show_name}_URL", run_id)
         self.telemetry.start_run(job_id)
 
         try:
@@ -687,3 +736,4 @@ class WorkflowOrchestrator:
         finally:
             self.telemetry.end_run()
             self.telemetry.emit()
+            self._record_telemetry(run_id)

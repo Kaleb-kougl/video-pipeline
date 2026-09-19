@@ -30,7 +30,13 @@ from agents.workflow_orchestrator import WorkflowOrchestrator
 from config.settings import get_settings
 from core import telemetry as telemetry_env
 from core.database import DatabaseManager
-from core.schemas import ProcessingResult
+from core.schemas import (
+    EpisodeOutcome,
+    EpisodeStatus,
+    ProcessingResult,
+    RunStatus,
+    SeasonRunReport,
+)
 from media.format_exporters import (
     InstagramReelsExporter,
     TikTokExporter,
@@ -159,6 +165,7 @@ class AnimeVideoGenerator:
         episode: int,
         episode_title: str = None,
         full_processing: bool = True,
+        run_id: str = None,
     ) -> ProcessingResult:
         """
         Process an episode by show name, season, and episode numbers using complete workflow.
@@ -169,6 +176,8 @@ class AnimeVideoGenerator:
             episode (int): Episode number
             episode_title (str, optional): Episode title for better matching
             full_processing (bool): Whether to do full AI/video processing or just transcript discovery
+            run_id (str, optional): Identity of the season run this episode belongs
+                to, so its telemetry and state stay attributable to that run.
 
         Returns:
             ProcessingResult: Result of the processing
@@ -179,7 +188,7 @@ class AnimeVideoGenerator:
             if full_processing:
                 # Use the workflow orchestrator for complete processing with Phase 2 enhancement
                 result = await self.orchestrator.process_episode_complete(
-                    show_name, season, episode, episode_title, self.db
+                    show_name, season, episode, episode_title, self.db, run_id=run_id
                 )
             else:
                 # Just do transcript discovery and save to database
@@ -244,9 +253,26 @@ class AnimeVideoGenerator:
         start_episode: int = None,
         end_episode: int = None,
         full_processing: bool = False,
-    ):
+        resume: bool = False,
+        run_id: str = None,
+    ) -> SeasonRunReport | None:
         """
         Process multiple episodes in a season using modular workflow.
+
+        A season batch is long-running, expensive and partially failing: every
+        episode makes paid model calls and renders a video. This method is
+        therefore written to be **resumable**. Before an episode is touched its
+        row is moved to ``in_progress``; afterwards it is moved to ``succeeded``
+        or ``failed`` with the reason. A run that dies - crash, Ctrl-C, SIGKILL -
+        leaves the episode it was on at ``in_progress`` and the run at
+        ``running``, which is the honest record: the work started and how far it
+        got is unknown, so the resume retries it.
+
+        With ``resume=True`` the batch reuses the run identity of the last run
+        for this show and season that did not finish cleanly, and skips every
+        episode already recorded as ``succeeded``. Skipped episodes cost
+        nothing: no discovery, no model call, no render, and not even the
+        inter-episode politeness delay.
 
         Args:
             show_name (str): The name of the show
@@ -254,6 +280,13 @@ class AnimeVideoGenerator:
             start_episode (int, optional): Starting episode number
             end_episode (int, optional): Ending episode number
             full_processing (bool): Whether to do full AI/video processing
+            resume (bool): Continue the previous unfinished run for this season
+                instead of starting a new one, skipping completed episodes.
+            run_id (str, optional): Resume this exact run. Implies ``resume``.
+
+        Returns:
+            SeasonRunReport: What the run accomplished, or ``None`` when the
+            season length is unknown and nothing could be attempted.
         """
         # Get episode range from config manager
         from config.settings import EpisodeConfigs
@@ -261,15 +294,45 @@ class AnimeVideoGenerator:
         max_episodes = EpisodeConfigs.get_season_episodes(show_name, season)
         if not max_episodes:
             logger.error(f"No configuration found for {show_name} season {season}")
-            return
+            return None
 
         if start_episode is None:
             start_episode = 1
         if end_episode is None:
             end_episode = max_episodes
 
+        # Establish the run identity first: everything below is recorded
+        # against it, so a resumed pass is recognisably the same run and not a
+        # second one that happens to look alike.
+        resuming = False
+        if run_id:
+            resume = True
+        elif resume:
+            previous = self.db.find_resumable_run(show_name, season)
+            if previous:
+                run_id = previous["run_id"]
+            else:
+                logger.info(
+                    f"No unfinished run found for {show_name} season {season}; starting a new one"
+                )
+        if run_id is None:
+            run_id = self.db.new_run_id(show_name, season)
+        else:
+            resuming = self.db.get_run(run_id) is not None
+
+        self.db.start_run(
+            run_id,
+            show_name,
+            season,
+            command="process-season",
+            start_episode=start_episode,
+            end_episode=end_episode,
+            full_processing=full_processing,
+        )
+
         logger.info(
-            f"Processing {show_name} Season {season}, Episodes {start_episode}-{end_episode}"
+            f"Processing {show_name} Season {season}, Episodes {start_episode}-{end_episode} "
+            f"(run {run_id}{', resumed' if resuming else ''})"
         )
         logger.info(
             f"Full processing: {'enabled' if full_processing else 'disabled (transcript only)'}"
@@ -277,25 +340,91 @@ class AnimeVideoGenerator:
 
         successful = 0
         failed = 0
+        skipped = 0
+        outcomes: list[EpisodeOutcome] = []
 
+        # Deliberately no `except BaseException` around this loop. A hard stop
+        # must leave the run at `running` and the episode at `in_progress` so
+        # `--resume` can find it; writing a terminal status on the way out
+        # would erase exactly the evidence the resume depends on.
         for ep_num in range(start_episode, end_episode + 1):
-            episode_config = self.config_manager.get_episode_config(show_name, season, ep_num)
-            episode_title = episode_config.get("title") if episode_config else None
+            if resume and self.db.is_episode_complete(show_name, season, ep_num):
+                skipped += 1
+                logger.info(f"Skipping S{season}E{ep_num}: already completed by run {run_id}")
+                outcomes.append(
+                    EpisodeOutcome(
+                        episode=ep_num, status=EpisodeStatus.SUCCEEDED, skipped=True, attempts=0
+                    )
+                )
+                continue
 
+            # `get_episode_config` takes (season, episode). This call passed
+            # (show, season, episode) and so raised TypeError on the first
+            # episode of every batch - `process-season` could not complete a
+            # single episode. The extra argument was not harmless padding
+            # either: the config manager is hardcoded to one show, so its
+            # titles are only usable when that show is the one being
+            # processed, and the returned `show` is checked rather than
+            # assumed. A wrong title steers transcript discovery at the wrong
+            # episode.
+            episode_config = self.config_manager.get_episode_config(season, ep_num)
+            episode_title = (
+                episode_config.get("title")
+                if episode_config and episode_config.get("show") == show_name
+                else None
+            )
+
+            self.db.begin_episode(show_name, season, ep_num, run_id)
             result = await self.process_episode_by_numbers(
-                show_name, season, ep_num, episode_title, full_processing
+                show_name, season, ep_num, episode_title, full_processing, run_id=run_id
             )
 
             if result.success:
                 successful += 1
+                self.db.complete_episode(
+                    show_name, season, ep_num, EpisodeStatus.SUCCEEDED, run_id=run_id
+                )
+                outcomes.append(EpisodeOutcome(episode=ep_num, status=EpisodeStatus.SUCCEEDED))
             else:
                 failed += 1
+                self.db.complete_episode(
+                    show_name,
+                    season,
+                    ep_num,
+                    EpisodeStatus.FAILED,
+                    error=result.error,
+                    run_id=run_id,
+                )
+                outcomes.append(
+                    EpisodeOutcome(episode=ep_num, status=EpisodeStatus.FAILED, error=result.error)
+                )
                 logger.error(f"Failed to process episode {ep_num}: {result.error}")
 
-            # Add delay between episodes to be respectful to servers
+            # Add delay between episodes to be respectful to servers. Only
+            # after real work: a resumed run that skips ten episodes should not
+            # sleep for a server it never contacted.
             time.sleep(random.uniform(2, 5))
 
-        logger.info(f"Batch processing complete: {successful} successful, {failed} failed")
+        run_status = RunStatus.SUCCEEDED if failed == 0 else RunStatus.PARTIAL
+        self.db.finish_run(run_id, run_status)
+
+        logger.info(
+            f"Batch processing complete: {successful} successful, {failed} failed, "
+            f"{skipped} already done (run {run_id})"
+        )
+
+        return SeasonRunReport(
+            run_id=run_id,
+            show=show_name,
+            season=season,
+            resumed=resuming,
+            status=run_status,
+            requested=end_episode - start_episode + 1,
+            succeeded=successful,
+            failed=failed,
+            skipped=skipped,
+            episodes=outcomes,
+        )
 
     async def process_season(
         self,
@@ -349,13 +478,29 @@ class AnimeVideoGenerator:
             logger.info("📚 Ensuring all episodes have transcripts...")
             from config.settings import EpisodeConfigs
 
+            # How many episodes this season has must be *known*, never assumed.
+            # This used to fall back to a hardcoded 12 when neither the config
+            # nor discovery could say - the same fabrication 2971e15 removed
+            # from the discovery agent, which that commit did not reach here.
+            # A wrong count is not a harmless default: too high and the run
+            # spends paid calls on episodes that do not exist (and records the
+            # spurious ones as real), too low and it silently drops the tail of
+            # the season from the summary. Failing is the honest outcome.
             episode_count = EpisodeConfigs.get_season_episodes(show_name, season)
             if not episode_count:
                 # Try to discover episodes
                 discovered_episodes = self.discover_show_episodes(show_name, season)
-                episode_count = (
-                    len(discovered_episodes) if discovered_episodes else 12
-                )  # Default fallback
+                if not discovered_episodes:
+                    error_msg = (
+                        f"Season length unknown for {show_name} season {season}: it is not in "
+                        "config.settings.EpisodeConfigs and episode discovery returned nothing. "
+                        "Note that discovery returning nothing is NOT evidence that the season "
+                        "is empty - it may equally mean the sources were unreachable. Add the "
+                        "season to EpisodeConfigs, or re-run once discovery works."
+                    )
+                    logger.error(error_msg)
+                    return ProcessingResult(success=False, error=error_msg)
+                episode_count = len(discovered_episodes)
 
             # Process episodes to ensure transcripts are available
             transcript_errors = []
@@ -1506,8 +1651,9 @@ async def main():
         - process-url: Process episode from transcript URL
         - process-episode: Process episode by show/season/episode numbers
         - process-season: Batch process multiple episodes in a season
+          (--resume continues the last unfinished run, skipping completed episodes)
         - create-season-summary: Generate comprehensive season summaries with video
-        - stats: Display processing statistics
+        - stats: Display processing statistics (--run <id> for one season run's detail)
         - test-transcript: Test transcript discovery functionality
         - analyze-quality: Perform quality analysis on episodes
         - discover: Discover available episodes for shows
@@ -1577,6 +1723,19 @@ async def main():
     batch_parser.add_argument("--start", type=int, help="Starting episode number")
     batch_parser.add_argument("--end", type=int, help="Ending episode number")
     batch_parser.add_argument("--full", action="store_true", help="Enable full AI/video processing")
+    batch_parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Continue the last unfinished run for this season instead of starting a new one, "
+            "skipping episodes already recorded as succeeded"
+        ),
+    )
+    batch_parser.add_argument(
+        "--run-id",
+        dest="run_id",
+        help="Resume this exact run id (implies --resume). See the run-status command.",
+    )
 
     # Process complete season summary with multimedia
     season_summary_parser = subparsers.add_parser(
@@ -1611,7 +1770,15 @@ async def main():
     view_summaries_parser.add_argument("--show", help="Filter by show name")
 
     # Get statistics
-    subparsers.add_parser("stats", help="Show processing statistics")
+    stats_parser = subparsers.add_parser("stats", help="Show processing statistics")
+    stats_parser.add_argument(
+        "--run",
+        dest="run",
+        help=(
+            "Show what one season run accomplished, episode by episode. "
+            "Run ids are printed by process-season and listed here."
+        ),
+    )
 
     # Test transcript discovery
     test_parser = subparsers.add_parser("test-transcript", help="Test transcript discovery")
@@ -1798,9 +1965,30 @@ async def main():
             print(f"Result: {result}")
 
         elif args.command == "process-season":
-            await generator.process_season_batch(
-                args.show, args.season, args.start, args.end, args.full
+            report = await generator.process_season_batch(
+                args.show,
+                args.season,
+                args.start,
+                args.end,
+                args.full,
+                resume=args.resume,
+                run_id=args.run_id,
             )
+            if report is None:
+                print("No run was started (see the log for why).")
+            else:
+                print(f"Run {report.run_id} ({report.status.value})")
+                print(
+                    f"  requested {report.requested} | succeeded {report.succeeded} | "
+                    f"failed {report.failed} | already done {report.skipped}"
+                )
+                for outcome in report.episodes:
+                    if outcome.skipped:
+                        continue
+                    detail = f" - {outcome.error}" if outcome.error else ""
+                    print(f"  E{outcome.episode}: {outcome.status.value}{detail}")
+                if report.status is not RunStatus.SUCCEEDED:
+                    print(f"\nResume with: process-season ... --resume --run-id {report.run_id}")
 
         elif args.command == "create-season-summary":
             format_msg = f" in {args.format} format" if args.format != "standard" else ""
@@ -1835,11 +2023,43 @@ async def main():
                 print(f"❌ Season summary creation failed: {result.error}")
 
         elif args.command == "stats":
-            stats = generator.get_stats()
-            print("Processing Statistics:")
-            print(f"Total episodes: {stats['total_episodes']}")
-            print(f"Status counts: {stats['status_counts']}")
-            print(f"Recent activity: {stats['recent_activity']}")
+            if args.run:
+                # What one (possibly killed) run accomplished, episode by episode.
+                progress = generator.db.get_run_progress(args.run)
+                if not progress["found"]:
+                    print(f"No run recorded with id {args.run}")
+                else:
+                    run = progress["run"]
+                    print(f"Run {run['run_id']}: {run['status']}")
+                    print(f"  {run['show']} season {run['season']}, command {run['command']}")
+                    print(f"  started {run['created_at']}, finished {run['finished_at'] or '-'}")
+                    if run["resumed_count"]:
+                        print(f"  resumed {run['resumed_count']} time(s)")
+                    print(f"  episode states: {progress['status_counts']}")
+                    for row in progress["episodes"]:
+                        detail = f" - {row['last_error']}" if row["last_error"] else ""
+                        print(
+                            f"    E{row['episode']}: {row['status']} "
+                            f"(attempts {row['attempts']}){detail}"
+                        )
+            else:
+                stats = generator.get_stats()
+                print("Processing Statistics:")
+                print(f"Total episodes: {stats['total_episodes']}")
+                print(f"Status counts: {stats['status_counts']}")
+                print(f"Recent activity: {stats['recent_activity']}")
+
+                # Surface anything left half-done, so a user who does not
+                # already know a run id can still find the run worth resuming.
+                unfinished = stats["unfinished_runs"]
+                if unfinished:
+                    print("\nRuns that did not finish cleanly:")
+                    for run in unfinished:
+                        print(
+                            f"  {run['run_id']} ({run['status']}) - "
+                            f"{run['show']} season {run['season']}"
+                        )
+                    print("Inspect one with: stats --run <run_id>")
 
         elif args.command == "test-transcript":
             # Use enhanced discovery agent instead of old transcript agent
