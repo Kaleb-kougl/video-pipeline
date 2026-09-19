@@ -1,0 +1,15 @@
+{
+  "_comment": "Recorded model output for case 'short_episode'. Re-record with: python evals/run_eval.py --mode live --record --case short_episode",
+  "_provenance": "HAND-AUTHORED STAND-IN. No GOOGLE_API_KEY was available when the golden set was built, so these fixtures are written to be realistic model outputs rather than captured ones. They are the right shape and exercise the rubric end to end, but they are not evidence about the real model. Replace them with genuine captures (--mode live --record) and re-baseline; the committed numbers will move and that is the point.",
+  "show": "The Quiet Signal",
+  "season": "1",
+  "episode": "2",
+  "youtube_transcript": "Six days after the relay tower went dead, Mira is still picking up a signal on it, and Osgood is still insisting that dead towers do not transmit. Seven tones, every forty minutes, far too regular to be storm noise. So they climb four hundred metres of wet lattice steel in weather Osgood swears is worse than anything on Halloway Ridge, and halfway up Mira works out that the transmission is not coming from the antenna at all. It is coming from underneath the tower, from the Calder substation that was decommissioned before either of them was born. Then the pattern changes: eight tones instead of seven, which Osgood recognises as a station identifier rather than a fault. Somebody down there is announcing themselves, and the only question left is who they are announcing themselves to. Osgood tells Mira to log everything and say nothing at the depot until they know. If you have a theory about what is under Calder, drop a comment, hit like, and subscribe.",
+  "plot_points": [
+    "Mira insists the dead relay tower is still transmitting seven tones every forty minutes.",
+    "Osgood dismisses the signal as storm interference until the regularity of the pattern changes his mind.",
+    "Mira and Osgood climb four hundred metres of wet lattice steel to reach the antenna.",
+    "Mira traces the transmission to the decommissioned Calder substation beneath the tower.",
+    "The tones increase to eight, which Osgood identifies as a station identifier, and he orders Mira to tell nobody at the depot."
+  ]
+}

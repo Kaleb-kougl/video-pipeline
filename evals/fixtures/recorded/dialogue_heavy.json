@@ -1,0 +1,15 @@
+{
+  "_comment": "Recorded model output for case 'dialogue_heavy'. Re-record with: python evals/run_eval.py --mode live --record --case dialogue_heavy",
+  "_provenance": "HAND-AUTHORED STAND-IN. No GOOGLE_API_KEY was available when the golden set was built, so these fixtures are written to be realistic model outputs rather than captured ones. They are the right shape and exercise the rubric end to end, but they are not evidence about the real model. Replace them with genuine captures (--mode live --record) and re-baseline; the committed numbers will move and that is the point.",
+  "show": "Kettle Street Kitchen",
+  "season": "2",
+  "episode": "4",
+  "youtube_transcript": "Table nine sends the consomme back for the third time in one night, and Bardo will not filter it, because in his head unfiltered is not the same thing as cloudy and never will be. Ines is the one carrying the plates, so she is the one who has to hear it. Then Perrin says the number out loud: eleven covers, on what should be their best night, and a landlord who has stopped picking up the phone. Bardo's answer is the one he has been trying to finish for months. One dish. One price. No choices at all, the way it worked for him back in Tarsell, which Perrin points out was nineteen years ago and not his rent to pay. Nobody wins the argument. Bardo fires two more consomme, unfiltered, and promises to walk them out to table nine himself. Perrin gives him a week before they talk about closing. Subscribe if you want to see whether one dish saves the place.",
+  "plot_points": [
+    "Table nine returns Bardo's unfiltered consomme for the third time in one service.",
+    "Ines is caught between the dining room's complaints and Bardo's refusal to change the dish.",
+    "Perrin reveals the restaurant has only eleven covers booked and a landlord who will not answer.",
+    "Bardo proposes stripping the menu to a single dish at a single price, as he did in Tarsell.",
+    "Sous chef Delacque walks out mid-service rather than plate another consomme."
+  ]
+}

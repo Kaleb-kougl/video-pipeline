@@ -1,0 +1,15 @@
+{
+  "_comment": "Recorded model output for case 'near_empty'. Re-record with: python evals/run_eval.py --mode live --record --case near_empty",
+  "_provenance": "HAND-AUTHORED STAND-IN. No GOOGLE_API_KEY was available when the golden set was built, so these fixtures are written to be realistic model outputs rather than captured ones. They are the right shape and exercise the rubric end to end, but they are not evidence about the real model. Replace them with genuine captures (--mode live --record) and re-baseline; the committed numbers will move and that is the point.",
+  "show": "Voidwalker Academy",
+  "season": "1",
+  "episode": "11",
+  "youtube_transcript": "Episode eleven is where Voidwalker Academy finally stops teaching and starts testing. Kaiden walks into the Rite of Descent convinced he can hold the tether on his own, and Sera is the only one who tells him the truth about what the void does to a first-year. Instructor Vance lets him go anyway, because that is the entire point of the Rite, and when the tether snaps it is Sera who goes in after him. They both come back changed, and the Academy pretends not to notice. Like the video, leave a comment with what you think the void showed Kaiden, and subscribe so you do not miss the finale.",
+  "plot_points": [
+    "Kaiden enters the Rite of Descent believing he can hold the tether unaided.",
+    "Sera warns Kaiden about what the void does to first-year students.",
+    "Instructor Vance allows the attempt to proceed as a deliberate lesson.",
+    "The tether snaps and Sera descends into the void to retrieve Kaiden.",
+    "Both students return altered while the Academy refuses to acknowledge it."
+  ]
+}

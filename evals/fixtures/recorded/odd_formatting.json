@@ -1,0 +1,15 @@
+{
+  "_comment": "Recorded model output for case 'odd_formatting'. Re-record with: python evals/run_eval.py --mode live --record --case odd_formatting",
+  "_provenance": "HAND-AUTHORED STAND-IN. No GOOGLE_API_KEY was available when the golden set was built, so these fixtures are written to be realistic model outputs rather than captured ones. They are the right shape and exercise the rubric end to end, but they are not evidence about the real model. Replace them with genuine captures (--mode live --record) and re-baseline; the committed numbers will move and that is the point.",
+  "show": "Gearheart Rally",
+  "season": "3",
+  "episode": "1",
+  "youtube_transcript": "Welcome back to TLDR Media, and season three opens exactly the way the last two did: with a car that will not start. Tally has rebuilt the fuel pump around a salvage diaphragm, which Rukh points out is the whole reason the pressure is at nothing, and which Tally points out was the only diaphragm in the district. So they push-start her down the ramp, the engine catches, and Marshal Okonwa is waiting at the bottom to tell them that a start under assistance is a penalty. Not a disqualification, Tally says. Not yet, says Okonwa. Out on the salt flats the temperature gauge climbs and Rukh watches Tally deliberately ignore it for two hundred metres, which turns out to be two hundred metres too many. The engine seizes. Three seasons, same car, same excuse. Like, comment and subscribe if you think the diaphragm was the real problem.",
+  "plot_points": [
+    "Tally's rebuilt fuel pump fails because it uses a salvage diaphragm, leaving fuel pressure at zero.",
+    "Rukh and Tally push-start the car down the pit ramp to get the engine running.",
+    "Marshal Okonwa rules that starting under assistance is a penalty, and warns it could become worse.",
+    "Tally admits she can see the rising temperature gauge on the salt flats and ignores it anyway.",
+    "The engine seizes two hundred metres short of the stage end, ending the run."
+  ]
+}

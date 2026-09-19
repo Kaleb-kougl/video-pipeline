@@ -1,0 +1,55 @@
+{
+  "_case_notes": {
+    "dialogue_heavy": "Capped at 0.80 by one invented name (a sous chef who is not in the transcript), and the CTA is incomplete. This is what a mediocre-but-shippable output scores.",
+    "ensemble_arc": "Drops the two minor characters (Halden, Vesper) from an ensemble episode; everything else is clean.",
+    "near_empty": "Floored by the hallucination cap: the fixture invents an entire cast for a transcript that contains nothing. 0.25 is the intended baseline, not a bug. An honest 'no usable transcript' output would score around 0.48, so a prompt fix that teaches the model to refuse here shows up as a large positive delta.",
+    "odd_formatting": "Loses 0.10 to an introduction the prompt explicitly forbids. The model obeys the CTA instruction and disobeys the no-intro one, which is exactly the sort of asymmetry this rubric exists to surface.",
+    "short_episode": "Clean baseline. Anything below ~0.95 here is a real regression."
+  },
+  "_comment": [
+    "Committed baseline. This file is the regression signal: a prompt change that makes",
+    "generation worse shows up here as a diff in a code review, which is the whole point.",
+    "",
+    "Regenerate with:  python evals/run_eval.py --mode live --record   (re-records fixtures)",
+    "                  python evals/run_eval.py --update-baseline      (re-scores and writes here)",
+    "Never update the baseline in the same commit as a prompt change without saying in the",
+    "commit message which numbers moved and why.",
+    "",
+    "The gate: CI fails if the aggregate drops below min_aggregate_score, if any single case",
+    "regresses by more than max_case_regression, or if the shipped prompt stops issuing an",
+    "instruction the rubric scores (the prompt-contract check).",
+    "min_aggregate_score is set ~0.02 under the current aggregate: tight enough to catch a",
+    "real regression, loose enough that rounding noise does not fail a build."
+  ],
+  "aggregate_score": 0.772,
+  "cases": {
+    "dialogue_heavy": {
+      "score": 0.8
+    },
+    "ensemble_arc": {
+      "score": 0.96
+    },
+    "near_empty": {
+      "score": 0.25
+    },
+    "odd_formatting": {
+      "score": 0.87
+    },
+    "short_episode": {
+      "score": 0.98
+    }
+  },
+  "gate": {
+    "max_case_regression": 0.05,
+    "min_aggregate_score": 0.75
+  },
+  "metric_averages": {
+    "cta_compliance": 0.8667,
+    "entity_coverage": 0.8,
+    "length_adherence": 0.9682,
+    "no_intro_compliance": 0.8,
+    "output_present": 1.0,
+    "plot_point_grounding": 0.78,
+    "schema_validity": 1.0
+  }
+}

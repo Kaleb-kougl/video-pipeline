@@ -1,0 +1,61 @@
+{
+  "_comment": [
+    "The golden set. Five synthetic transcripts for fictional shows - no copyrighted",
+    "material, nothing scraped. Each case is chosen to stress a different failure mode",
+    "of the summarisation prompt, not to be representative of an 'average' episode.",
+    "target_minutes feeds the length-adherence metric via the 150 words-per-minute",
+    "assumption in media/media_utils.py::create_silent_audio_fallback (word_count / 2.5)."
+  ],
+  "cases": [
+    {
+      "id": "short_episode",
+      "transcript": "short_episode.txt",
+      "show": "The Quiet Signal",
+      "season": "1",
+      "episode": "2",
+      "target_minutes": 1.0,
+      "stresses": "Baseline. Short, clean, two speakers, one clear escalating plot line.",
+      "expect": "Everything should pass here. A regression on this case is a real regression."
+    },
+    {
+      "id": "dialogue_heavy",
+      "transcript": "dialogue_heavy.txt",
+      "show": "Kettle Street Kitchen",
+      "season": "2",
+      "episode": "4",
+      "target_minutes": 2.0,
+      "stresses": "Thirty short exchanges, three speakers, argument-shaped. Plot is implied by dialogue rather than stated.",
+      "expect": "Grounding is the risk: models tend to summarise the mood and drop the named characters."
+    },
+    {
+      "id": "near_empty",
+      "transcript": "near_empty.txt",
+      "show": "Voidwalker Academy",
+      "season": "1",
+      "episode": "11",
+      "target_minutes": 1.0,
+      "stresses": "The interesting failure case. A scrape that succeeded structurally and returned nothing usable.",
+      "expect": "Either an honest refusal or a hallucinated episode. The eval does not score a refusal as success; it scores whether the output is empty (output_present) and whether anything it says is grounded. A confident, fluent, entirely invented summary should score WORSE here than a short honest one."
+    },
+    {
+      "id": "odd_formatting",
+      "transcript": "odd_formatting.txt",
+      "show": "Gearheart Rally",
+      "season": "3",
+      "episode": "1",
+      "target_minutes": 1.0,
+      "stresses": "Timestamps, HTML entities, ALL-CAPS shouting, inconsistent speaker markers, scene-break sigils, lowercase dialogue.",
+      "expect": "Entity extraction has to survive the noise, and the model has to not echo the formatting into the narration script."
+    },
+    {
+      "id": "ensemble_arc",
+      "transcript": "ensemble_arc.txt",
+      "show": "Starlight Cartographers",
+      "season": "1",
+      "episode": "9",
+      "target_minutes": 2.0,
+      "stresses": "Five named speakers plus a narrator, a technical premise, and a consequence that lands outside the episode.",
+      "expect": "Coverage is the risk: the minor characters (Vesper, Halden) are the ones that get dropped first."
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "_comment": "Recorded model output for case 'ensemble_arc'. Re-record with: python evals/run_eval.py --mode live --record --case ensemble_arc",
+  "_provenance": "HAND-AUTHORED STAND-IN. No GOOGLE_API_KEY was available when the golden set was built, so these fixtures are written to be realistic model outputs rather than captured ones. They are the right shape and exercise the rubric end to end, but they are not evidence about the real model. Replace them with genuine captures (--mode live --record) and re-baseline; the committed numbers will move and that is the point.",
+  "show": "Starlight Cartographers",
+  "season": "1",
+  "episode": "9",
+  "youtube_transcript": "Two hundred days into mapping the Verge, the survey ship Corolla files a chart that does not agree with itself. Sabine has the parallax saying the Threnody Cluster has not moved and the occultation timings saying it came four light-days closer while they were looking straight at it. She ran it on both arrays and then by hand, so it is not the instruments, and a cluster does not travel four light-days in a hundred and ten days without leaving something behind. Captain Idris orders a survey burn out to the Threnody edge. Then Sabine says the part that actually matters: if the ninth chart is wrong, the eight charts behind it are wrong too, and every world the Corolla has filed this season is in the wrong place. Idris is willing to eat the embarrassment. What he is not willing to eat is three colony convoys already flying on those charts, the first of which makes orbit in nineteen days. So the correction goes out before the burn, not after, on the reasoning that being wrong faster is the only advantage anyone on this ship has left. Like and comment if you think the cluster moved, and subscribe for the rest of the Verge survey.",
+  "plot_points": [
+    "Sabine finds the ninth chart's parallax and occultation data contradicting each other.",
+    "Sabine rules out instrument error by rerunning the measurements on both arrays and by hand.",
+    "Captain Idris orders a survey burn out to the Threnody edge.",
+    "Sabine realises the previous eight charts must also be wrong, misplacing every filed world.",
+    "Idris files the correction before the burn because three colony convoys are already flying on the bad charts."
+  ]
+}
