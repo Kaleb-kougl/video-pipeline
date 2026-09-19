@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security, credentials, scraping or licensing
+    url: https://github.com/kalebkougl/anime-video-generator/blob/main/SECURITY.md
+    about: Do not open a public issue for these. See SECURITY.md.
+  - name: Where does my question go?
+    url: https://github.com/kalebkougl/anime-video-generator/blob/main/SUPPORT.md
+    about: SUPPORT.md, plus the things that are already known and not bugs.

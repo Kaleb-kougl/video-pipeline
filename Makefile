@@ -44,6 +44,19 @@ clean-demo:  ## Delete everything the demo wrote
 # Development
 # ---------------------------------------------------------------------------
 
+# `make demo` and `make install-demo` build a slim venv from
+# requirements-demo.txt, which deliberately omits the dev tooling. Hitting that
+# with `make test` used to fail as a bare "No module named pytest", which tells
+# a newcomer nothing. Say what happened and what to run instead.
+define require_dev_tool
+@$(BIN)/python -c "import $(1)" >/dev/null 2>&1 || { \
+	echo "ERROR: '$(1)' is not installed in $(VENV)."; \
+	echo "       That venv looks like a demo venv - requirements-demo.txt omits"; \
+	echo "       the dev tooling to keep the demo install small."; \
+	echo "       Run:  make install      # full deps + ruff, mypy, pre-commit"; \
+	exit 1; }
+endef
+
 install:  ## Create the venv, install the FULL deps and the pre-commit hooks
 	$(PYTHON) -m venv $(VENV)
 	$(BIN)/pip install --upgrade pip
@@ -56,18 +69,22 @@ install-demo:  ## Create the venv with only the deps the demo needs (~0.3 GB)
 	$(BIN)/pip install --upgrade pip
 	$(BIN)/pip install -r requirements-demo.txt
 
-test:  ## Run the test suite (network suites are excluded via pyproject addopts)
+test: $(BIN)/python  ## Run the test suite (network suites are excluded via pyproject addopts)
+	$(call require_dev_tool,pytest)
 	$(BIN)/python -m pytest
 
-lint:  ## Check style and imports without changing anything
+lint: $(BIN)/python  ## Check style and imports without changing anything
+	$(call require_dev_tool,ruff)
 	$(BIN)/python -m ruff check .
 	$(BIN)/python -m ruff format --check .
 
-format:  ## Apply autofixes and reformat
+format: $(BIN)/python  ## Apply autofixes and reformat
+	$(call require_dev_tool,ruff)
 	$(BIN)/python -m ruff check --fix .
 	$(BIN)/python -m ruff format .
 
-typecheck:  ## Type check the strictly-typed packages (core.* only, for now)
+typecheck: $(BIN)/python  ## Type check the strictly-typed packages (core.* only, for now)
+	$(call require_dev_tool,mypy)
 	$(BIN)/python -m mypy --no-incremental core
 
 # ---------------------------------------------------------------------------

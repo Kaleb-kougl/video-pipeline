@@ -1,0 +1,15 @@
+# Every path in this repository is owned and reviewed by one person. This file
+# exists so that ownership is declared rather than assumed, and so branch
+# protection can require a review once there is more than one contributor.
+#
+# Syntax: <pattern> <owner>. Last matching line wins.
+
+*                       @kalebkougl
+
+# Called out individually because these are the gates. A change here changes
+# what "passing" means, so it should never merge as a drive-by edit.
+/.github/workflows/     @kalebkougl
+/evals/                 @kalebkougl
+/pyproject.toml         @kalebkougl
+/Makefile               @kalebkougl
+/docs/adr/              @kalebkougl
