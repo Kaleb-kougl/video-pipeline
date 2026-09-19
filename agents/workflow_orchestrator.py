@@ -3,6 +3,7 @@ Main workflow orchestrator that coordinates all agents.
 """
 
 import logging
+import time
 from datetime import datetime
 from typing import Any
 
@@ -22,6 +23,7 @@ from core.database import DatabaseManager
 from core.intelligent_format_adapter import IntelligentFormatAdapter
 from core.protocols import CharacterAnalyzer, ChatModel
 from core.schemas import Episode_Summary_Schema, ProcessingResult
+from core.telemetry import RunTelemetry
 from core.visual_coherence_manager import VisualCoherenceManager
 from media.media_utils import create_images, mp4_file_enhanced, wave_file
 
@@ -54,6 +56,7 @@ class WorkflowOrchestrator:
         visual_coherence: Any | None = None,
         quality_manager: Any | None = None,
         format_adapter: Any | None = None,
+        telemetry: RunTelemetry | None = None,
     ):
         """
         Initialize all the necessary components and agents.
@@ -85,6 +88,9 @@ class WorkflowOrchestrator:
             visual_coherence: Visual coherence collaborator.
             quality_manager: Adaptive quality collaborator.
             format_adapter: Platform format collaborator.
+            telemetry: Run telemetry collector. When omitted one is built from
+                the environment (``ANIME_TELEMETRY=0`` yields an inert
+                collector). See :mod:`core.telemetry` and ``docs/telemetry.md``.
         """
         # Core infrastructure components
         self.db = db if db is not None else DatabaseManager(db_path)  # Database operations
@@ -155,6 +161,16 @@ class WorkflowOrchestrator:
             self.model.with_structured_output(Episode_Summary_Schema) if self.model else None
         )
 
+        # Run telemetry. Held on the instance rather than threaded through the
+        # call stack because `generate_all_media` is reached from three entry
+        # points; each of those calls `start_run()` to reset it, so the object
+        # always describes the most recent run. Constructed here (not per run)
+        # so a caller that invokes `generate_structured_summary` directly - the
+        # eval harness does - still gets a valid, inert-if-disabled collector.
+        self.telemetry = (
+            telemetry if telemetry is not None else RunTelemetry.from_env("no-run-started")
+        )
+
         logger.info("WorkflowOrchestrator initialized with all agents")
 
     async def process_episode(self, url: str, show_name: str) -> dict[str, Any]:
@@ -172,12 +188,14 @@ class WorkflowOrchestrator:
         """
         # Generate unique job identifier for tracking and logging
         job_id = f"{show_name}_{datetime.now().isoformat()}"
+        self.telemetry.start_run(job_id)
 
         try:
             # Step 1: Extract and analyze content from the transcript URL
             # This involves web scraping, HTML parsing, and initial content analysis
             logger.info(f"Starting content extraction for {job_id}")
-            content_result = self.content_agent.extract_and_analyze(url)
+            with self.telemetry.stage("content_extraction"):
+                content_result = self.content_agent.extract_and_analyze(url)
 
             # Validate that content extraction was successful
             if not content_result["success"]:
@@ -186,7 +204,8 @@ class WorkflowOrchestrator:
             # Step 2: Generate a structured summary using the AI model
             # Transform raw transcript into YouTube-ready content with plot points
             logger.info("Generating AI summary")
-            summary_result = self.generate_structured_summary(content_result, show_name)
+            with self.telemetry.stage("summarization"):
+                summary_result = self.generate_structured_summary(content_result, show_name)
 
             # Step 3: (no content quality gate - see note below)
             # There used to be a `qa_agent.validate_content(...)` call here whose
@@ -203,15 +222,16 @@ class WorkflowOrchestrator:
 
             # Step 4: Save the processed data to the database for persistence
             # Store all generated content for future reference and reprocessing
-            self.db.save_episode(
-                summary_result["show"],
-                summary_result["season"],
-                summary_result["episode"],
-                url,
-                content_result["transcript"],
-                summary_result["youtube_transcript"],
-                summary_result["plot_points"],
-            )
+            with self.telemetry.stage("persistence"):
+                self.db.save_episode(
+                    summary_result["show"],
+                    summary_result["season"],
+                    summary_result["episode"],
+                    url,
+                    content_result["transcript"],
+                    summary_result["youtube_transcript"],
+                    summary_result["plot_points"],
+                )
 
             # Step 5: Generate the image and audio files for video compilation using Phase 2 enhancement
             # Create all media assets needed for the final video output
@@ -220,12 +240,30 @@ class WorkflowOrchestrator:
 
             # Log successful completion and return success response
             logger.info(f"Successfully processed episode {job_id}")
-            return {"success": True, "job_id": job_id, "data": summary_result}
+            self.telemetry.end_run()
+            return {
+                "success": True,
+                "job_id": job_id,
+                "data": summary_result,
+                "telemetry": self.telemetry.to_dict(),
+            }
 
         except Exception as e:
             # Handle any errors that occur during the workflow
             logger.error(f"Workflow failed for {job_id}: {e}")
-            return {"success": False, "job_id": job_id, "error": str(e)}
+            self.telemetry.end_run()
+            return {
+                "success": False,
+                "job_id": job_id,
+                "error": str(e),
+                "telemetry": self.telemetry.to_dict(),
+            }
+
+        finally:
+            # A failed run's stage timings are the interesting ones, so the
+            # report is published either way.
+            self.telemetry.end_run()
+            self.telemetry.emit()
 
     def generate_structured_summary(
         self, content_result: dict[str, Any], show_name: str
@@ -266,8 +304,14 @@ class WorkflowOrchestrator:
             }
         )
 
-        # Use the structured output model to ensure consistent data format
-        response = self.model_with_structure.invoke(prompt)
+        # Use the structured output model to ensure consistent data format.
+        # The telemetry wrapper is a LangChain callback, so `invoke` keeps its
+        # exact signature and return type - `with_structured_output` hands back
+        # a parsed Pydantic model that carries no usage metadata of its own, and
+        # the callback is the only way to see the underlying response's tokens
+        # without changing this call to `include_raw=True`.
+        with self.telemetry.llm_call("episode_summary"):
+            response = self.model_with_structure.invoke(prompt)
         return response.model_dump()
 
     async def generate_all_media(self, episode_data: dict[str, Any]) -> None:
@@ -281,34 +325,38 @@ class WorkflowOrchestrator:
             episode_data (Dict[str, Any]): The structured data of the episode including plot points and metadata
         """
         logger.info("Starting Phase 2 enhanced media generation")
+        media_started = time.perf_counter()
 
         # Phase 2 Step 1: Character Analysis Integration
         # Analyze characters and enhance episode with character-aware timing
         try:
-            # Get character analysis for this episode
-            character_analysis = self.character_analysis_agent.analyze_episode_characters(
-                episode_data["show"],
-                episode_data["season"],
-                episode_data["episode"],
-                episode_data.get("transcript", ""),
-            )
+            with self.telemetry.stage("character_enrichment"):
+                # Get character analysis for this episode
+                character_analysis = self.character_analysis_agent.analyze_episode_characters(
+                    episode_data["show"],
+                    episode_data["season"],
+                    episode_data["episode"],
+                    episode_data.get("transcript", ""),
+                )
 
-            # Convert episode data to Phase 2 format
-            episode_content = {
-                "scenes": [
-                    {
-                        "prompt": plot_point,
-                        "base_duration": 3.0,  # Default base duration
-                        "characters": [],  # Will be filled by character analysis
-                    }
-                    for plot_point in episode_data["plot_points"]
-                ]
-            }
+                # Convert episode data to Phase 2 format
+                episode_content = {
+                    "scenes": [
+                        {
+                            "prompt": plot_point,
+                            "base_duration": 3.0,  # Default base duration
+                            "characters": [],  # Will be filled by character analysis
+                        }
+                        for plot_point in episode_data["plot_points"]
+                    ]
+                }
 
-            # Enhance episode with character data
-            enhanced_episode = await self.character_enhancer.enhance_episode_with_character_data(
-                episode_content, {"profiles": character_analysis}
-            )
+                # Enhance episode with character data
+                enhanced_episode = (
+                    await self.character_enhancer.enhance_episode_with_character_data(
+                        episode_content, {"profiles": character_analysis}
+                    )
+                )
 
             logger.info(
                 f"Enhanced episode with {len(enhanced_episode['character_focus'])} characters"
@@ -327,10 +375,11 @@ class WorkflowOrchestrator:
         # Phase 2 Step 2: Adaptive Quality Management
         # Select optimal quality profile based on system resources
         try:
-            quality_profile = await self.quality_manager.select_quality_profile(
-                context="production",  # Default to production quality
-                deadline=None,  # No deadline pressure for standard processing
-            )
+            with self.telemetry.stage("quality_profile"):
+                quality_profile = await self.quality_manager.select_quality_profile(
+                    context="production",  # Default to production quality
+                    deadline=None,  # No deadline pressure for standard processing
+                )
             logger.info(f"Selected quality profile: {quality_profile.name}")
         except Exception as e:
             logger.warning(f"Quality management failed, using defaults: {e}")
@@ -347,38 +396,46 @@ class WorkflowOrchestrator:
             "show": episode_data["show"],
         }
 
-        for i, scene in enumerate(enhanced_episode["scenes"]):
-            try:
-                # Build a coherence-enhanced prompt (style + character consistency)
-                coherent_prompt = await self.visual_coherence.build_coherent_prompt(
-                    scene.get("enhanced_prompt", scene["prompt"]),
-                    scene.get("characters", []),
-                    episode_context,
-                )
-                enhanced_prompts.append(coherent_prompt)
-                logger.debug(f"Built coherence-enhanced prompt for scene {i}")
+        with self.telemetry.stage("prompt_construction"):
+            for i, scene in enumerate(enhanced_episode["scenes"]):
+                try:
+                    # Build a coherence-enhanced prompt (style + character consistency)
+                    coherent_prompt = await self.visual_coherence.build_coherent_prompt(
+                        scene.get("enhanced_prompt", scene["prompt"]),
+                        scene.get("characters", []),
+                        episode_context,
+                    )
+                    enhanced_prompts.append(coherent_prompt)
+                    logger.debug(f"Built coherence-enhanced prompt for scene {i}")
 
-            except Exception as e:
-                logger.warning(
-                    f"Visual coherence prompt building failed for scene {i}, using fallback: {e}"
-                )
-                # Fallback to the video agent's generic style prompt enhancement
-                enhanced_prompts.append(
-                    self.video_agent.generate_optimized_images([scene["prompt"]], episode_data)[0]
-                )
+                except Exception as e:
+                    logger.warning(
+                        f"Visual coherence prompt building failed for scene {i}, using fallback: {e}"
+                    )
+                    # Fallback to the video agent's generic style prompt enhancement
+                    enhanced_prompts.append(
+                        self.video_agent.generate_optimized_images([scene["prompt"]], episode_data)[
+                            0
+                        ]
+                    )
 
         # Step 4: Create the actual image files using enhanced prompts
-        create_images(
-            enhanced_prompts, episode_data["episode"], episode_data["season"], episode_data["show"]
-        )
+        with self.telemetry.stage("image_generation"):
+            create_images(
+                enhanced_prompts,
+                episode_data["episode"],
+                episode_data["season"],
+                episode_data["show"],
+            )
 
         # Step 5: Generate the audio file from the YouTube transcript
-        wave_length = wave_file(
-            show=episode_data["show"],
-            season=episode_data["season"],
-            episode=episode_data["episode"],
-            contents=episode_data["youtube_transcript"],
-        )
+        with self.telemetry.stage("audio_synthesis"):
+            wave_length = wave_file(
+                show=episode_data["show"],
+                season=episode_data["season"],
+                episode=episode_data["episode"],
+                contents=episode_data["youtube_transcript"],
+            )
 
         # Step 6: Use character-aware durations or fallback to adaptive calculation
         if "scenes" in enhanced_episode:
@@ -393,23 +450,33 @@ class WorkflowOrchestrator:
             logger.info("Using fallback adaptive timing")
 
         # Step 7: Create the final MP4 video file
-        mp4_file_enhanced(
-            show=episode_data["show"],
-            season=episode_data["season"],
-            episode=episode_data["episode"],
-            sentences=episode_data["plot_points"],
-            durations=durations,
-        )
+        with self.telemetry.stage("video_encode"):
+            mp4_file_enhanced(
+                show=episode_data["show"],
+                season=episode_data["season"],
+                episode=episode_data["episode"],
+                sentences=episode_data["plot_points"],
+                durations=durations,
+            )
 
         # Phase 2 Step 8: Platform Adaptation (optional)
         # Generate platform-optimized versions if requested
         try:
             if quality_profile:
-                # Record quality metrics for optimization
+                # Record quality metrics for optimization.
+                #
+                # This block used to post `processing_time_ms: 0` and
+                # `output_quality_score: 0.9` with "would be measured in a real
+                # implementation" next to them - three invented numbers feeding
+                # an optimiser. The time is now the real elapsed media-generation
+                # wall-clock. The other two are reported as `None`: nothing in
+                # this process samples RSS, and no quality validator has run at
+                # this point, so a number there would be fiction. A consumer can
+                # tell "not measured" from "measured zero".
                 processing_metrics = {
-                    "processing_time_ms": 0,  # Would be measured in real implementation
-                    "memory_usage_mb": 0,  # Would be measured in real implementation
-                    "output_quality_score": 0.9,  # Based on quality validation
+                    "processing_time_ms": round((time.perf_counter() - media_started) * 1000, 3),
+                    "memory_usage_mb": None,  # not sampled - see note above
+                    "output_quality_score": None,  # no validator runs in this path
                     "success": True,
                 }
                 self.quality_manager.record_quality_metrics(quality_profile, processing_metrics)
@@ -447,13 +514,15 @@ class WorkflowOrchestrator:
 
         # Generate unique job identifier for tracking
         job_id = f"{show_name}_S{season}E{episode}_{datetime.now().isoformat()}"
+        self.telemetry.start_run(job_id)
 
         try:
             # Step 1: Use enhanced discovery agent to find the episode URL with search functionality
             logger.info("Discovering episode URL using enhanced search...")
-            discovery_result = self.discovery_agent.search_episode_enhanced(
-                show_name, season, episode, episode_title
-            )
+            with self.telemetry.stage("transcript_discovery"):
+                discovery_result = self.discovery_agent.search_episode_enhanced(
+                    show_name, season, episode, episode_title
+                )
 
             if not discovery_result or not discovery_result.get("url"):
                 error_msg = (
@@ -470,9 +539,10 @@ class WorkflowOrchestrator:
 
             # Step 2: Use transcript agent to parse the discovered URL
             logger.info("Parsing transcript content from discovered URL...")
-            transcript_result = self.transcript_agent.parse_discovered_url(
-                discovered_url, discovery_result["source"]
-            )
+            with self.telemetry.stage("transcript_parse"):
+                transcript_result = self.transcript_agent.parse_discovered_url(
+                    discovered_url, discovery_result["source"]
+                )
 
             if not transcript_result or not transcript_result.get("transcript"):
                 error_msg = f"Failed to parse transcript from discovered URL: {discovered_url}"
@@ -497,7 +567,8 @@ class WorkflowOrchestrator:
 
             # Step 3: Generate structured summary
             logger.info("Generating AI summary...")
-            summary_result = self.generate_structured_summary(content_result, show_name)
+            with self.telemetry.stage("summarization"):
+                summary_result = self.generate_structured_summary(content_result, show_name)
 
             # Ensure episode info is correctly set
             summary_result["season"] = str(season)
@@ -512,15 +583,16 @@ class WorkflowOrchestrator:
 
             # Step 5: Save to database
             db_instance = db or self.db
-            db_instance.save_episode(
-                summary_result["show"],
-                summary_result["season"],
-                summary_result["episode"],
-                transcript_result["url"],
-                content_result["transcript"],
-                summary_result["youtube_transcript"],
-                summary_result["plot_points"],
-            )
+            with self.telemetry.stage("persistence"):
+                db_instance.save_episode(
+                    summary_result["show"],
+                    summary_result["season"],
+                    summary_result["episode"],
+                    transcript_result["url"],
+                    content_result["transcript"],
+                    summary_result["youtube_transcript"],
+                    summary_result["plot_points"],
+                )
 
             # Step 6: Generate all media files with Phase 2 enhancement
             logger.info("Generating media files with Phase 2 Quality Enhancement...")
@@ -534,6 +606,13 @@ class WorkflowOrchestrator:
         except Exception as e:
             logger.error(f"Complete processing failed for {job_id}: {e}")
             return ProcessingResult(success=False, job_id=job_id, error=str(e))
+
+        finally:
+            # `ProcessingResult` has no telemetry field (core/schemas.py is not
+            # changed here), so the report reaches callers two ways: printed /
+            # logged by `emit()`, and on `orchestrator.telemetry` afterwards.
+            self.telemetry.end_run()
+            self.telemetry.emit()
 
     async def process_episode_from_url(
         self, url: str, show_name: str, db: DatabaseManager = None
@@ -556,11 +635,13 @@ class WorkflowOrchestrator:
 
         # Generate unique job identifier for tracking
         job_id = f"{show_name}_URL_{datetime.now().isoformat()}"
+        self.telemetry.start_run(job_id)
 
         try:
             # Step 1: Extract and analyze content from the provided URL
             logger.info("Extracting content from URL...")
-            content_result = self.content_agent.extract_and_analyze(url)
+            with self.telemetry.stage("content_extraction"):
+                content_result = self.content_agent.extract_and_analyze(url)
 
             # Validate that content extraction was successful
             if not content_result["success"]:
@@ -570,7 +651,8 @@ class WorkflowOrchestrator:
 
             # Step 2: Generate structured summary
             logger.info("Generating AI summary...")
-            summary_result = self.generate_structured_summary(content_result, show_name)
+            with self.telemetry.stage("summarization"):
+                summary_result = self.generate_structured_summary(content_result, show_name)
 
             # Step 3: (no content quality gate - the discarded
             # `qa_agent.validate_content(...)` call that used to sit here was
@@ -580,15 +662,16 @@ class WorkflowOrchestrator:
 
             # Step 4: Save to database
             db_instance = db or self.db
-            db_instance.save_episode(
-                summary_result["show"],
-                summary_result["season"],
-                summary_result["episode"],
-                url,
-                content_result["transcript"],
-                summary_result["youtube_transcript"],
-                summary_result["plot_points"],
-            )
+            with self.telemetry.stage("persistence"):
+                db_instance.save_episode(
+                    summary_result["show"],
+                    summary_result["season"],
+                    summary_result["episode"],
+                    url,
+                    content_result["transcript"],
+                    summary_result["youtube_transcript"],
+                    summary_result["plot_points"],
+                )
 
             # Step 5: Generate all media files with Phase 2 enhancement
             logger.info("Generating media files with Phase 2 Quality Enhancement...")
@@ -600,3 +683,7 @@ class WorkflowOrchestrator:
         except Exception as e:
             logger.error(f"URL processing failed for {job_id}: {e}")
             return ProcessingResult(success=False, job_id=job_id, error=str(e))
+
+        finally:
+            self.telemetry.end_run()
+            self.telemetry.emit()

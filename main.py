@@ -28,6 +28,7 @@ from agents.transcript_source_agent import TranscriptSourceDiscoveryAgent
 from agents.video_agent import VideoGenerationAgent
 from agents.workflow_orchestrator import WorkflowOrchestrator
 from config.settings import get_settings
+from core import telemetry as telemetry_env
 from core.database import DatabaseManager
 from core.schemas import ProcessingResult
 from media.format_exporters import (
@@ -1530,6 +1531,26 @@ async def main():
     setup_logging()
 
     parser = argparse.ArgumentParser(description="Anime Video Generator")
+
+    # Telemetry switches are global rather than per-command: every command that
+    # drives the orchestrator produces a run report, and the report should be
+    # controllable the same way regardless of which one it was. They write the
+    # environment variables `core.telemetry` already reads, so the CLI, a bare
+    # `python -c` driver and the Docker image all share one contract.
+    parser.add_argument(
+        "--no-telemetry",
+        action="store_true",
+        help="Disable run timing/token collection entirely (same as ANIME_TELEMETRY=0)",
+    )
+    parser.add_argument(
+        "--telemetry-json",
+        metavar="PATH",
+        help=(
+            "Also write the run telemetry as JSON. A directory gets one file per run; "
+            "anything else is used as the filename (same as ANIME_TELEMETRY_JSON)"
+        ),
+    )
+
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Process single episode by URL
@@ -1744,6 +1765,13 @@ async def main():
     season_analysis_parser.add_argument("season", type=int, help="Season number")
 
     args = parser.parse_args()
+
+    # Apply the telemetry switches before anything constructs an orchestrator:
+    # `RunTelemetry.from_env` is read at construction time.
+    if args.no_telemetry:
+        os.environ[telemetry_env.ENV_ENABLED] = "0"
+    if args.telemetry_json:
+        os.environ[telemetry_env.ENV_JSON] = args.telemetry_json
 
     if not args.command:
         parser.print_help()
