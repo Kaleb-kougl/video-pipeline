@@ -24,6 +24,19 @@ class EpisodeDiscoveryAgent:
     through intelligent search queries and result parsing.
     """
 
+    #: How many consecutive episode probes must come back empty before a season
+    #: with no configured length is treated as finished. Nothing here invents a
+    #: season length: the run stops on observed evidence (a run of misses) and
+    #: the trailing misses are discarded rather than reported as episodes.
+    CONSECUTIVE_MISSES_TO_STOP = 3
+
+    #: Hard ceiling on probes for a season with no configured length. Reaching it
+    #: means the season is reported as partial coverage, never as complete.
+    MAX_EPISODE_PROBES = 60
+
+    #: Hard ceiling on seasons probed for a show with no configured season list.
+    MAX_SEASON_PROBES = 20
+
     def __init__(self):
         """
         Initialize the enhanced episode discovery agent with search configurations.
@@ -703,60 +716,82 @@ class EpisodeDiscoveryAgent:
         """
         return self.discover_episode_url(show_name, season, episode, possible_titles)
 
+    def _configured_season_lengths(self, show_name: str) -> dict[int, dict]:
+        """
+        Return the configured season structure for `show_name`, or ``{}``.
+
+        An empty mapping means "the season structure of this show is unknown" -
+        it must not be substituted with a guessed one.
+
+        Args:
+            show_name (str): Show to look up
+
+        Returns:
+            dict[int, dict]: Season number -> season config, empty if unknown
+        """
+        try:
+            from agents.config_manager import EpisodeConfigManager
+        except ImportError:
+            logger.warning(
+                "Config manager not available: no show has a known season structure, "
+                "every season will be probed"
+            )
+            return {}
+
+        config_manager = EpisodeConfigManager()
+        if show_name.strip().lower() != str(config_manager.default_config["show"]).lower():
+            return {}
+        return dict(config_manager.default_config["seasons"])
+
     def discover_all_episodes(self, show_name: str) -> list[dict]:
         """
         Enhanced discovery of all available episodes for a show across all seasons.
+
+        For a show whose season structure is configured, every configured season is
+        walked. For an unknown show the seasons are *probed*: season 1 upwards until
+        a season yields no episodes at all, which is the first real signal that the
+        show has run out. No season count is assumed.
 
         Args:
             show_name (str): The name of the show to discover episodes for
 
         Returns:
-            List[Dict]: List of episode dictionaries with metadata
+            List[Dict]: List of episode dictionaries with metadata. Each entry
+            carries ``episode_count_source`` ("config" or "probe") and
+            ``season_coverage`` ("complete" or "partial") so callers can tell a
+            known season length from a probed, possibly-truncated one.
         """
         logger.info(f"Enhanced discovery of all episodes for {show_name}")
 
-        all_episodes = []
+        all_episodes: list[dict] = []
+        configured_seasons = self._configured_season_lengths(show_name)
 
-        try:
-            # Import config manager to get season information
-            from agents.config_manager import EpisodeConfigManager
-
-            config_manager = EpisodeConfigManager()
-
-            # Get all seasons from configuration
-            if show_name == "My Hero Academia":
-                seasons = config_manager.default_config["seasons"]
-
-                for season_num, _season_data in seasons.items():
-                    season_episodes = self.discover_season_episodes(show_name, season_num)
-                    all_episodes.extend(season_episodes)
-            else:
-                logger.info(f"No specific configuration for {show_name}, searching seasons 1-5...")
-                # For unknown shows, try seasons 1-5 as a reasonable range
-                for season_num in range(1, 6):
-                    season_episodes = self.discover_season_episodes(show_name, season_num)
-
-                    # If we find episodes, continue searching more seasons
-                    # If we find no episodes in a season, we might have reached the end
-                    available_in_season = sum(1 for ep in season_episodes if ep["available"])
-                    all_episodes.extend(season_episodes)
-
-                    logger.info(f"Season {season_num}: {available_in_season} episodes available")
-
-                    # If we find very few episodes (less than 5), we might have reached the end
-                    if available_in_season < 5 and season_num > 1:
-                        logger.info(
-                            f"Stopping search after season {season_num} due to low episode count"
-                        )
-                        break
-
-        except ImportError:
-            logger.warning("Config manager not available, using fallback discovery")
-            # Fallback: try seasons 1-3
-            for season_num in range(1, 4):
+        if configured_seasons:
+            for season_num in sorted(configured_seasons):
+                all_episodes.extend(self.discover_season_episodes(show_name, season_num))
+        else:
+            logger.info(
+                f"No configured season structure for {show_name}: probing seasons from 1 "
+                f"until one comes back empty (ceiling {self.MAX_SEASON_PROBES} seasons)"
+            )
+            for season_num in range(1, self.MAX_SEASON_PROBES + 1):
                 season_episodes = self.discover_season_episodes(show_name, season_num)
-                if season_episodes:
-                    all_episodes.extend(season_episodes)
+                available_in_season = sum(1 for ep in season_episodes if ep["available"])
+                all_episodes.extend(season_episodes)
+
+                logger.info(f"Season {season_num}: {available_in_season} episodes available")
+
+                if available_in_season == 0:
+                    logger.info(
+                        f"Season {season_num} of {show_name} produced no episodes; treating "
+                        f"season {season_num - 1} as the last one discovered"
+                    )
+                    break
+            else:
+                logger.warning(
+                    f"Hit the {self.MAX_SEASON_PROBES}-season probe ceiling for {show_name}: "
+                    "this result is partial, later seasons were not looked at"
+                )
 
         total_available = sum(1 for ep in all_episodes if ep["available"])
         logger.info(
@@ -769,6 +804,12 @@ class EpisodeDiscoveryAgent:
         """
         Enhanced season episode discovery using search functionality.
 
+        When the season length is configured, exactly that many episodes are
+        searched for. When it is not, the season is probed from episode 1 and the
+        run stops after `CONSECUTIVE_MISSES_TO_STOP` consecutive episodes come
+        back empty; the trailing misses are dropped rather than reported, so an
+        unknown 12-episode season yields 12 entries, not a guessed 25.
+
         Args:
             show_name (str): The name of the show
             season (int): The season number to discover episodes for
@@ -776,39 +817,73 @@ class EpisodeDiscoveryAgent:
         Returns:
             List[Dict]: List of episode dictionaries with metadata
         """
-        logger.info(f"Enhanced discovery for {show_name} Season {season}")
+        configured_seasons = self._configured_season_lengths(show_name)
+        season_config = configured_seasons.get(season)
 
-        episodes = []
+        if season_config:
+            episode_count = season_config["episodes"]
+            logger.info(
+                f"Enhanced discovery for {show_name} Season {season}: "
+                f"{episode_count} configured episodes"
+            )
+            return self._probe_season_episodes(
+                show_name,
+                season,
+                season_config.get("titles", {}),
+                max_probes=episode_count,
+                stop_after_misses=None,
+                count_source="config",
+            )
 
-        # Import config manager to get episode counts and titles
-        try:
-            from agents.config_manager import EpisodeConfigManager
+        logger.info(
+            f"Enhanced discovery for {show_name} Season {season}: season length is unknown, "
+            f"probing from episode 1 and stopping after {self.CONSECUTIVE_MISSES_TO_STOP} "
+            f"consecutive misses (ceiling {self.MAX_EPISODE_PROBES} episodes)"
+        )
+        return self._probe_season_episodes(
+            show_name,
+            season,
+            {},
+            max_probes=self.MAX_EPISODE_PROBES,
+            stop_after_misses=self.CONSECUTIVE_MISSES_TO_STOP,
+            count_source="probe",
+        )
 
-            config_manager = EpisodeConfigManager()
+    def _probe_season_episodes(
+        self,
+        show_name: str,
+        season: int,
+        episode_titles: dict,
+        *,
+        max_probes: int,
+        stop_after_misses: int | None,
+        count_source: str,
+    ) -> list[dict]:
+        """
+        Search episodes of one season, one episode number at a time.
 
-            # Get episode count for this season
-            if show_name == "My Hero Academia":
-                season_config = config_manager.default_config["seasons"].get(season)
-                if season_config:
-                    episode_count = season_config["episodes"]
-                    episode_titles = season_config.get("titles", {})
-                else:
-                    logger.warning(
-                        f"No configuration found for Season {season}, trying up to 25 episodes"
-                    )
-                    episode_count = 25
-                    episode_titles = {}
-            else:
-                # For unknown shows, try up to 25 episodes (common anime season length)
-                episode_count = 25
-                episode_titles = {}
-        except ImportError:
-            logger.warning("Config manager not available, using default episode count")
-            episode_count = 25
-            episode_titles = {}
+        Args:
+            show_name (str): The name of the show
+            season (int): Season number being walked
+            episode_titles (dict): Known episode titles keyed by episode number
+            max_probes (int): Highest episode number to try
+            stop_after_misses (int, optional): Stop once this many consecutive
+                episodes come back empty. ``None`` walks all `max_probes`
+                episodes, which is only correct when the count is configured.
+            count_source (str): "config" when `max_probes` is a known season
+                length, "probe" when the end of the season is being inferred.
 
-        # Use enhanced search for each episode
-        for episode_num in range(1, episode_count + 1):
+        Returns:
+            List[Dict]: Episode dictionaries, without the trailing run of misses
+            that ended a probe.
+        """
+        episodes: list[dict] = []
+        pending_misses: list[dict] = []
+        consecutive_misses = 0
+        coverage = "complete" if count_source == "config" else "partial"
+        hit_ceiling = False
+
+        for episode_num in range(1, max_probes + 1):
             episode_title = episode_titles.get(episode_num)
 
             # Try to discover the episode URL using enhanced search
@@ -829,28 +904,57 @@ class EpisodeDiscoveryAgent:
                 "source": search_result.get("source") if search_result else None,
                 "quality_score": search_result.get("quality_score", 0.0) if search_result else 0.0,
                 "found_via": search_result.get("found_via") if search_result else None,
+                "episode_count_source": count_source,
+                "season_coverage": coverage,
             }
 
-            episodes.append(episode_info)
-
             if episode_url:
-                source_info = (
-                    f" (from {search_result.get('source', 'unknown')})" if search_result else ""
-                )
+                # Misses before a confirmed hit are real gaps inside the season.
+                episodes.extend(pending_misses)
+                pending_misses.clear()
+                episodes.append(episode_info)
+                consecutive_misses = 0
+
+                source_info = f" (from {search_result.get('source', 'unknown')})"
                 logger.info(
                     f"✅ Found S{season}E{episode_num}: {episode_title or 'Unknown Title'}{source_info}"
                 )
             else:
+                consecutive_misses += 1
                 logger.debug(
                     f"❌ Not found S{season}E{episode_num}: {episode_title or 'Unknown Title'}"
                 )
 
+                if stop_after_misses is None:
+                    episodes.append(episode_info)
+                else:
+                    # Held back: if nothing follows, these probed past the end of
+                    # the season and reporting them would invent episodes.
+                    pending_misses.append(episode_info)
+                    if consecutive_misses >= stop_after_misses:
+                        logger.info(
+                            f"Stopping probe of {show_name} Season {season} after "
+                            f"{consecutive_misses} consecutive misses at episode {episode_num}; "
+                            f"{len(episodes)} episode(s) discovered"
+                        )
+                        break
+
             # Add small delay between searches to be respectful
             time.sleep(random.uniform(0.5, 1.5))
+        else:
+            hit_ceiling = stop_after_misses is not None
+
+        if hit_ceiling:
+            episodes.extend(pending_misses)
+            logger.warning(
+                f"Hit the {max_probes}-episode probe ceiling for {show_name} Season {season}: "
+                "the season may continue past this point, the result is partial"
+            )
 
         available_count = sum(1 for ep in episodes if ep["available"])
         logger.info(
-            f"Season {season} enhanced discovery complete: {available_count}/{episode_count} episodes available"
+            f"Season {season} enhanced discovery complete: {available_count}/{len(episodes)} "
+            f"episodes available (episode count from: {count_source}, coverage: {coverage})"
         )
 
         return episodes

@@ -96,7 +96,7 @@ The regression test suite was created to ensure that previously fixed bugs remai
 
 ### Run All Regression Tests
 ```bash
-python tests/test_regression_suite.py
+python scripts/run_regression_suite.py
 ```
 
 ### Run Individual Test Suites
@@ -169,7 +169,8 @@ When fixing new bugs, follow this pattern:
        success_rate = success_count / total_tests
        return success_rate >= 0.8
    ```
-3. **Add to Suite**: Update `test_regression_suite.py`
+3. **Add to Suite**: add an entry to `REGRESSION_TESTS` in `tests/test_regression_suite.py`
+   (the manifest `scripts/run_regression_suite.py` reads)
 4. **Document**: Add to this README
 
 ### Best Practices
@@ -209,7 +210,7 @@ The regression test suite is designed to integrate with continuous integration s
 
 ```bash
 # In CI pipeline
-python tests/test_regression_suite.py
+python scripts/run_regression_suite.py
 if [ $? -ne 0 ]; then
     echo "❌ Regression tests failed - blocking deployment"
     exit 1

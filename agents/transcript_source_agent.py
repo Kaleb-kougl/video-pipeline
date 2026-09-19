@@ -14,6 +14,17 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger(__name__)
 
 
+class WebSearchUnavailable(RuntimeError):
+    """
+    Raised when the web-search leg could not run at all.
+
+    This is deliberately distinct from "the search ran and matched nothing":
+    a block page, a captcha interstitial, a non-200 response or markup the
+    scraper can no longer parse all mean the leg produced *no information*,
+    and callers must not read the resulting empty list as evidence of absence.
+    """
+
+
 @dataclass
 class TranscriptSource:
     """Data class for transcript source information."""
@@ -50,17 +61,36 @@ class TranscriptSourceDiscoveryAgent:
         "Crunchyroll",
     )
 
-    def __init__(self):
+    #: Markers that identify a Google response as a block / captcha
+    #: interstitial rather than a results page.
+    BLOCK_PAGE_MARKERS = (
+        "unusual traffic",
+        "captcha",
+        "recaptcha",
+        "detected unusual traffic",
+        "our systems have detected",
+        "before you continue to google",
+    )
+
+    def __init__(self, enable_web_search: bool = False):
         """
         Initialize the transcript source discovery agent.
 
         Sets up known source patterns, reliability indicators, search engines,
         and rate limiting configuration for transcript source discovery and evaluation.
+
+        Args:
+            enable_web_search (bool): Opt in to the scraped-Google web-search leg.
+                It is **off by default** because google.com blocks scripted
+                requests in practice, so the leg is an unreliable extra rather
+                than part of the baseline behaviour. When it is off,
+                ``_perform_web_search`` does nothing and says so, instead of
+                returning an empty list that looks like a completed search.
         """
-        # Only "fandom_wikis" and "transcript_databases" are crawled directly by
-        # _search_known_patterns(). "community_sites" and "streaming_platforms" are
-        # reference data: they document domains that web-search results are
-        # classified against, they are not themselves searched.
+        # Every entry here is crawled directly by _search_known_patterns(). Do not
+        # park reference-only domains in this dict: a key nothing iterates is a
+        # config that advertises coverage the agent does not have. Domains used
+        # purely for classification live in `source_type_domains` below.
         self.known_source_patterns = {
             "fandom_wikis": [
                 "https://{}.fandom.com",
@@ -74,18 +104,15 @@ class TranscriptSourceDiscoveryAgent:
                 "https://www.tvfanatic.com",
                 "https://www.imdb.com",
             ],
-            "community_sites": [
-                "https://www.reddit.com/r/{}",
-                "https://myanimelist.net",
-                "https://anidb.net",
-                "https://www.animenewsnetwork.com",
-            ],
-            "streaming_platforms": [
-                "https://www.crunchyroll.com",
-                "https://www.funimation.com",
-                "https://www.hulu.com",
-                "https://www.netflix.com",
-            ],
+        }
+
+        # Classification data, not crawl targets: these domains are matched
+        # against URLs that turn up in web-search results to label a source's
+        # type. They are read by _analyze_potential_source().
+        self.source_type_domains = {
+            "wiki": ["fandom.com", "wikia.com"],
+            "community": ["reddit.com", "myanimelist.net", "anidb.net", "animenewsnetwork.com"],
+            "official": ["crunchyroll.com", "funimation.com", "hulu.com", "netflix.com"],
         }
 
         self.reliability_indicators = {
@@ -121,6 +148,12 @@ class TranscriptSourceDiscoveryAgent:
             "https://www.bing.com/search",
         ]
 
+        # Web-search leg: opt-in, and its outcome is recorded so callers can tell
+        # "did not run" from "ran and found nothing".
+        self.enable_web_search = enable_web_search
+        self.last_web_search_status = "not_run"
+        self.last_discovery_report: dict = {}
+
         # Rate limiting
         self.request_delay = 2  # seconds between requests
         self.last_request_time = 0
@@ -132,8 +165,15 @@ class TranscriptSourceDiscoveryAgent:
         Discover transcript sources for a specific show.
 
         Searches the source families this agent actually implements - Fandom-style
-        wikis and the known transcript databases - plus a general web search, then
-        evaluates, deduplicates and sorts the results by reliability.
+        wikis and the known transcript databases - plus, when it is explicitly
+        enabled, a general web search, then evaluates, deduplicates and sorts the
+        results by reliability.
+
+        The web-search leg is **opt-in** (``enable_web_search=True``) and can fail
+        outright: google.com serves block pages to scripted clients. Its outcome
+        is reported in ``last_web_search_status`` and ``last_discovery_report``
+        as one of ``not_run``, ``disabled``, ``unavailable`` or ``ok``, so an
+        empty result is never mistaken for "the whole web was searched".
 
         The dedicated anime catalogue sites in ``UNSEARCHED_SOURCES`` (MyAnimeList,
         AniDB, Anime News Network, Crunchyroll) are **not** queried: no client for
@@ -150,6 +190,7 @@ class TranscriptSourceDiscoveryAgent:
         """
         logger.info(f"Discovering transcript sources for: {show_name}")
 
+        self.last_web_search_status = "not_run"
         sources = []
 
         # 1. Search known source patterns
@@ -166,9 +207,18 @@ class TranscriptSourceDiscoveryAgent:
         # 4. Sort by reliability score
         evaluated_sources.sort(key=lambda x: x.reliability_score, reverse=True)
 
+        self.last_discovery_report = {
+            "show": show_name,
+            "season": season,
+            "sources_found": len(evaluated_sources),
+            "web_search": self.last_web_search_status,
+            "unsearched_sources": list(self.UNSEARCHED_SOURCES),
+        }
+
         logger.info(
             f"Found {len(evaluated_sources)} transcript sources for {show_name} "
-            f"(not searched: {', '.join(self.UNSEARCHED_SOURCES)})"
+            f"(web search: {self.last_web_search_status}; "
+            f"not searched: {', '.join(self.UNSEARCHED_SOURCES)})"
         )
         return evaluated_sources
 
@@ -221,7 +271,27 @@ class TranscriptSourceDiscoveryAgent:
         return sources
 
     def _perform_web_search(self, show_name: str, season: int = None) -> list[TranscriptSource]:
-        """Perform web search to find additional transcript sources."""
+        """
+        Perform web search to find additional transcript sources.
+
+        Sets ``self.last_web_search_status`` to one of:
+
+        * ``disabled``    - the leg is opt-in and was not enabled, nothing ran
+        * ``unavailable`` - the search engine blocked us / returned unparseable
+          markup, so nothing was learned
+        * ``ok``          - at least one query actually completed; an empty list
+          then really does mean "searched, found nothing"
+        """
+        if not self.enable_web_search:
+            self.last_web_search_status = "disabled"
+            logger.info(
+                "Web-search leg skipped for %s: it is opt-in (construct the agent with "
+                "enable_web_search=True). No web search was performed - an empty or short "
+                "source list here does not mean the web was searched and came up empty.",
+                show_name,
+            )
+            return []
+
         sources = []
 
         # Construct search queries
@@ -241,9 +311,27 @@ class TranscriptSourceDiscoveryAgent:
             )
 
         # Search each query (limited to avoid rate limiting)
+        completed_queries = 0
         for query in search_queries[:3]:  # Limit to first 3 queries
             try:
                 search_results = self._search_with_google(query)
+            except WebSearchUnavailable as e:
+                # The engine refused us. Stop hammering it and make sure nobody
+                # downstream reads the (possibly empty) result as a real search.
+                self.last_web_search_status = "unavailable"
+                logger.error(
+                    "Web-search leg UNAVAILABLE for '%s' (%s). %d of %d queries completed; "
+                    "the remaining transcript sources come from known patterns only. This is "
+                    "NOT the same as 'searched the web and found nothing'.",
+                    query,
+                    e,
+                    completed_queries,
+                    len(search_queries[:3]),
+                )
+                return sources
+
+            completed_queries += 1
+            try:
                 for result_url in search_results[:5]:  # Top 5 results per query
                     source = self._analyze_potential_source(result_url, show_name, season)
                     if source:
@@ -253,9 +341,10 @@ class TranscriptSourceDiscoveryAgent:
                 time.sleep(self.request_delay)
 
             except Exception as e:
-                logger.warning(f"Web search failed for query '{query}': {e}")
+                logger.warning(f"Failed to analyse results for query '{query}': {e}")
                 continue
 
+        self.last_web_search_status = "ok" if completed_queries else "not_run"
         return sources
 
     def _check_source_availability(
@@ -428,38 +517,69 @@ class TranscriptSourceDiscoveryAgent:
         return max(0.0, min(1.0, score))  # Clamp to 0-1 range
 
     def _search_with_google(self, query: str) -> list[str]:
-        """Perform Google search and extract result URLs."""
-        # Note: This is a simplified implementation
-        # In production, you'd want to use Google's API or a proper search library
-        try:
-            search_url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
+        """
+        Scrape a Google results page and extract result URLs.
 
-            self._rate_limit()
+        This scrapes google.com HTML directly, which Google blocks or rate-limits
+        for scripted clients; it is not a supported search integration. Every way
+        that can go wrong raises :class:`WebSearchUnavailable` rather than
+        returning ``[]``, because an empty list from this method would otherwise
+        be indistinguishable from a genuine "no results".
+
+        Returns:
+            list[str]: Result URLs (at most 10), always non-empty.
+
+        Raises:
+            WebSearchUnavailable: the request failed, was refused, was answered
+                with a block/captcha page, or produced markup this scraper can
+                no longer parse.
+        """
+        search_url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
+
+        self._rate_limit()
+        try:
             response = requests.get(
                 search_url,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; TranscriptBot/1.0)"},
                 timeout=10,
             )
+        except requests.RequestException as e:
+            raise WebSearchUnavailable(f"request to google.com failed: {e}") from e
 
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, "html.parser")
-                links = []
+        if response.status_code != 200:
+            raise WebSearchUnavailable(
+                f"google.com answered HTTP {response.status_code} (scraped search is "
+                "routinely blocked or rate-limited)"
+            )
 
-                # Extract search result URLs (simplified)
-                for link in soup.find_all("a", href=True):
-                    href = link["href"]
-                    if href.startswith("/url?q="):
-                        # Extract actual URL from Google's redirect
-                        actual_url = href.split("/url?q=")[1].split("&")[0]
-                        if actual_url.startswith("http") and "google.com" not in actual_url:
-                            links.append(actual_url)
+        body = response.text or ""
+        lowered = body.lower()
+        if "/sorry/" in str(getattr(response, "url", "")) or any(
+            marker in lowered for marker in self.BLOCK_PAGE_MARKERS
+        ):
+            raise WebSearchUnavailable(
+                "google.com returned a block/captcha interstitial instead of results"
+            )
 
-                return links[:10]  # Return top 10 results
+        soup = BeautifulSoup(body, "html.parser")
+        links = []
 
-        except Exception as e:
-            logger.warning(f"Google search failed: {e}")
+        # Extract search result URLs (simplified)
+        for link in soup.find_all("a", href=True):
+            href = link["href"]
+            if href.startswith("/url?q="):
+                # Extract actual URL from Google's redirect
+                actual_url = href.split("/url?q=")[1].split("&")[0]
+                if actual_url.startswith("http") and "google.com" not in actual_url:
+                    links.append(actual_url)
 
-        return []
+        if not links:
+            raise WebSearchUnavailable(
+                "no '/url?q=' result links found in the google.com response; the page "
+                "markup no longer matches this scraper, so nothing was searched"
+            )
+
+        return links[:10]  # Return top 10 results
 
     def _analyze_potential_source(
         self, url: str, show_name: str, season: int = None
@@ -469,15 +589,13 @@ class TranscriptSourceDiscoveryAgent:
             # Determine source type based on URL
             domain = urlparse(url).netloc.lower()
 
-            if "fandom.com" in domain or "wikia.com" in domain:
+            if any(wiki in domain for wiki in self.source_type_domains["wiki"]):
                 source_type = "wiki"
             elif any(db in domain for db in ["transcripts", "script", "subtitle"]):
                 source_type = "database"
-            elif "reddit.com" in domain:
+            elif any(site in domain for site in self.source_type_domains["community"]):
                 source_type = "community"
-            elif any(
-                stream in domain for stream in ["crunchyroll", "funimation", "hulu", "netflix"]
-            ):
+            elif any(stream in domain for stream in self.source_type_domains["official"]):
                 source_type = "official"
             else:
                 source_type = "fan_site"

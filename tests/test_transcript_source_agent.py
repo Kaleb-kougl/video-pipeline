@@ -176,22 +176,20 @@ def test_known_patterns():
 
     source_agent = TranscriptSourceDiscoveryAgent()
 
-    print("Known source patterns:")
-    print("\nFandom Wikis:")
-    for pattern in source_agent.known_source_patterns["fandom_wikis"]:
-        print(f"  • {pattern}")
+    # Every family in this dict is actually crawled by _search_known_patterns();
+    # printing it generically keeps this in step with the agent instead of
+    # naming families that may no longer exist.
+    print("Known source patterns (all of these are crawled):")
+    for family, patterns in source_agent.known_source_patterns.items():
+        print(f"\n{family}:")
+        for pattern in patterns:
+            print(f"  • {pattern}")
 
-    print("\nTranscript Databases:")
-    for pattern in source_agent.known_source_patterns["transcript_databases"]:
-        print(f"  • {pattern}")
-
-    print("\nCommunity Sites:")
-    for pattern in source_agent.known_source_patterns["community_sites"]:
-        print(f"  • {pattern}")
-
-    print("\nStreaming Platforms:")
-    for pattern in source_agent.known_source_patterns["streaming_platforms"]:
-        print(f"  • {pattern}")
+    print("\nClassification-only domains (never crawled, used to label results):")
+    for source_type, domains in source_agent.source_type_domains.items():
+        print(f"\n{source_type}:")
+        for domain in domains:
+            print(f"  • {domain}")
 
     print("\nReliability Indicators:")
     print("High Trust:")
