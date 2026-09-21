@@ -79,11 +79,20 @@ class MediaRecorder:
 
     def __init__(self) -> None:
         self.image_prompts: list[str] | None = None
+        self.image_generator: Any = None
         self.mp4_sentences: list[str] | None = None
         self.mp4_durations: list[float] | None = None
 
-    def create_images(self, sentences: list[str], episode: str, season: str, show: str) -> None:
+    def create_images(
+        self,
+        sentences: list[str],
+        episode: str,
+        season: str,
+        show: str,
+        image_generator: Any = None,
+    ) -> None:
         self.image_prompts = list(sentences)
+        self.image_generator = image_generator
 
     def mp4_file_enhanced(self, **kwargs: Any) -> None:
         self.mp4_sentences = list(kwargs["sentences"])

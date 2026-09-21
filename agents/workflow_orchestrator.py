@@ -24,11 +24,16 @@ from core.adaptive_quality_manager import AdaptiveQualityManager
 from core.character_episode_enhancer import EpisodeCharacterEnhancer
 from core.database import DatabaseManager
 from core.intelligent_format_adapter import IntelligentFormatAdapter
-from core.protocols import CharacterAnalyzer, ChatModel
+from core.protocols import CharacterAnalyzer, ChatModel, ImageFileGenerator
 from core.schemas import Episode_Summary_Schema, ProcessingResult, enforce_scene_cap
 from core.telemetry import RunTelemetry
 from core.visual_coherence_manager import VisualCoherenceManager
-from media.media_utils import create_images, mp4_file_enhanced, wave_file
+from media.media_utils import (
+    create_images,
+    mp4_file_enhanced,
+    resolve_image_generator,
+    wave_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +64,7 @@ class WorkflowOrchestrator:
         visual_coherence: Any | None = None,
         quality_manager: Any | None = None,
         format_adapter: Any | None = None,
+        image_generator: ImageFileGenerator | None = None,
         telemetry: RunTelemetry | None = None,
     ):
         """
@@ -91,6 +97,14 @@ class WorkflowOrchestrator:
             visual_coherence: Visual coherence collaborator.
             quality_manager: Adaptive quality collaborator.
             format_adapter: Platform format collaborator.
+            image_generator: The renderer behind every frame, implementing
+                :class:`core.protocols.ImageFileGenerator`. When omitted one is
+                resolved here, once for the whole run
+                (:func:`media.media_utils.resolve_image_generator`) - the
+                previous behaviour built an Imagen client inside
+                ``create_image``, i.e. once per image. Never ``None`` afterwards:
+                if no client can be built the run holds a stand-in that reports
+                the reason for each placeholder it causes.
             telemetry: Run telemetry collector. When omitted one is built from
                 the environment (``ANIME_TELEMETRY=0`` yields an inert
                 collector). See :mod:`core.telemetry` and ``docs/telemetry.md``.
@@ -170,6 +184,17 @@ class WorkflowOrchestrator:
         )
         self.format_adapter = (
             format_adapter if format_adapter is not None else IntelligentFormatAdapter()
+        )
+
+        # The image renderer is run-scoped like every collaborator above it.
+        # `create_image` used to construct a Google client per frame, so a
+        # twelve-scene episode built twelve identical clients and no caller
+        # could substitute one; it is built once here instead and forwarded to
+        # `create_images`. Resolving never raises: with no key or no client
+        # library this is an `UnavailableImageGenerator` carrying the reason,
+        # which each frame logs as it falls back to a placeholder.
+        self.image_generator: ImageFileGenerator = (
+            image_generator if image_generator is not None else resolve_image_generator()
         )
 
         # Structured output model for consistent data format
@@ -614,6 +639,7 @@ class WorkflowOrchestrator:
                 episode_data["episode"],
                 episode_data["season"],
                 episode_data["show"],
+                image_generator=self.image_generator,
             )
 
         # Step 5: Generate the audio file from the YouTube transcript

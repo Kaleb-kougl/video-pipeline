@@ -44,7 +44,12 @@ from media.format_exporters import (
     TwitterVideoExporter,
     YouTubeShortsExporter,
 )
-from media.media_utils import create_images, mp4_file_enhanced, wave_file
+from media.media_utils import (
+    create_images,
+    mp4_file_enhanced,
+    resolve_image_generator,
+    wave_file,
+)
 from utils.vector_search import VectorSearchManager
 
 
@@ -118,6 +123,14 @@ class AnimeVideoGenerator:
             self.character_agent = None
             logger.info(f"Character analysis disabled: {exc}")
 
+        # The image renderer, built once for the process rather than once per
+        # frame, and shared with the orchestrator below for the same reason the
+        # database and the agents are: two composition sites that each build
+        # their own is how this file ended up with two of everything else.
+        # Resolving never raises - without a key or the client library this is a
+        # stand-in that explains, per frame, why a placeholder was drawn.
+        self.image_generator = resolve_image_generator()
+
         # Hand the orchestrator the collaborators this process already owns.
         # Built with no arguments it would construct a *second* DatabaseManager
         # (at its own hardcoded path) plus duplicate copies of six agents and a
@@ -136,6 +149,7 @@ class AnimeVideoGenerator:
             transcript_agent=self.transcript_agent,
             config_manager=self.config_manager,
             character_analysis_agent=self.character_agent,
+            image_generator=self.image_generator,
         )
 
         # Initialize vector search manager (optional)
@@ -1485,8 +1499,15 @@ class AnimeVideoGenerator:
             # Extract image prompts from concepts
             image_prompts = [concept["enhanced_prompt"] for concept in visual_concepts]
 
-            # Use existing media utils function with correct parameter order
-            create_images(image_prompts, f"Season_{season}", str(season), show_name)
+            # Use existing media utils function with correct parameter order,
+            # rendering through the generator this process already built.
+            create_images(
+                image_prompts,
+                f"Season_{season}",
+                str(season),
+                show_name,
+                image_generator=self.image_generator,
+            )
 
             logger.info(f"Generated {len(visual_concepts)} images for season summary")
 

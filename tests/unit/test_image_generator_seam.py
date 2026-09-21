@@ -18,8 +18,13 @@ What these tests pin:
 * every reason the production generator can fail to exist - no key, no client
   library, a client that refuses to construct - degrades to the same placeholder
   title card, with the reason logged (the ``b6fde06`` lesson);
-* the offline demo's path, which injects nothing and relies on that degradation,
-  still writes one real PNG per sentence.
+* a caller that injects nothing still writes one real PNG per sentence.
+
+What these tests do *not* pin is that production actually injects anything:
+they all enter at ``create_image``/``create_images``, which is the half of the
+seam nothing in production called. That is
+``tests/unit/test_image_generator_wiring.py``, which enters through the
+``WorkflowOrchestrator`` and ``main.AnimeVideoGenerator`` instead.
 """
 
 import inspect
@@ -252,14 +257,20 @@ def test_a_client_that_refuses_to_construct_degrades_too(in_tmp_cwd, monkeypatch
 
 
 # ---------------------------------------------------------------------------
-# 4. The demo path, which injects nothing
+# 4. A caller that injects nothing
 # ---------------------------------------------------------------------------
 
 
-def test_the_demo_path_renders_every_slide_with_no_key_and_no_injection(
+def test_the_uninjected_path_renders_every_slide_with_no_key(
     in_tmp_cwd, without_api_key, unused_genai
 ):
-    """``make demo`` runs exactly this: no generator, no key, real PNGs."""
+    """No generator and no key still means real PNGs, one per sentence.
+
+    The offline demo reaches the same degradation by a shorter route now: it
+    builds a ``WorkflowOrchestrator``, which resolves one generator for the run
+    (a stand-in, with no key) and forwards it. This is the shape left for
+    callers that pass nothing at all.
+    """
     sentences = ["first slide", "second slide", "third slide"]
 
     create_images(sentences, EPISODE, SEASON, SHOW)

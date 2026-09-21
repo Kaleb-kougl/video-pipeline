@@ -65,11 +65,13 @@ class RecordedMedia:
     def __init__(self, output_dir: Path):
         self.output_dir = output_dir
         self.image_prompts = None
+        self.image_generator = None
         self.audio_text = None
         self.video_durations = None
 
-    def create_images(self, sentences, episode, season, show):
+    def create_images(self, sentences, episode, season, show, image_generator=None):
         self.image_prompts = list(sentences)
+        self.image_generator = image_generator
         episode_dir = self.output_dir / show / f"Season {season}" / f"Episode {episode}"
         episode_dir.mkdir(parents=True, exist_ok=True)
         for index, _prompt in enumerate(sentences):

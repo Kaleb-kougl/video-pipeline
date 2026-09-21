@@ -96,7 +96,61 @@ def build_image_generator() -> ImageFileGenerator:
     return ImagenImageGenerator(api_key)
 
 
-def create_images(sentences: list[str], episode: str, season: str, show: str) -> None:
+class UnavailableImageGenerator:
+    """
+    The ``ImageFileGenerator`` of a run that has none, carrying the reason why.
+
+    ``build_image_generator`` is the only place a client is constructed, and it
+    is now called once per run at the composition root rather than once per
+    frame. When it refuses, the run still renders - one placeholder per scene -
+    and each placeholder still has to say *why*, so the reason is carried here
+    and re-raised at the point ``create_image`` already handles it. The printed
+    and logged fallback messages are therefore identical to the ones produced
+    when construction was attempted per frame.
+
+    Deliberately not ``None``: ``None`` at a call site means "nobody wired a
+    generator", which is a defect worth noticing, while this means "the wiring
+    ran and there is no generator", which is an ordinary offline Tuesday.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+    def generate_image(self, prompt: str, destination: str) -> str:
+        """Fail with the reason construction failed, once per frame."""
+        raise ImageGeneratorUnavailable(self.reason)
+
+
+def resolve_image_generator() -> ImageFileGenerator:
+    """
+    Build this run's image generator, or a stand-in that explains its absence.
+
+    The counterpart to ``build_image_generator`` for callers that own a whole
+    run rather than a single frame: it never raises, because an unavailable
+    generator is an ordinary state here (the offline demo runs in it), and the
+    caller gets an object either way. Call it once per run - the orchestrator
+    and ``main.AnimeVideoGenerator`` do, in ``__init__``, alongside the other
+    injected collaborators - so that an Imagen client is constructed at most
+    once instead of once per image.
+
+    Returns:
+        The production ``ImageFileGenerator``, or an ``UnavailableImageGenerator``
+        holding the reason there is none.
+    """
+    try:
+        return build_image_generator()
+    except ImageGeneratorUnavailable as exc:
+        logger.info("No image generator for this run (%s); every frame will be a placeholder", exc)
+        return UnavailableImageGenerator(str(exc))
+
+
+def create_images(
+    sentences: list[str],
+    episode: str,
+    season: str,
+    show: str,
+    image_generator: ImageFileGenerator | None = None,
+) -> None:
     """
     Creates AI-generated images for each plot point in the episode.
     This function coordinates the generation of multiple images that will
@@ -107,11 +161,18 @@ def create_images(sentences: list[str], episode: str, season: str, show: str) ->
         episode (str): Episode identifier for file naming and organization
         season (str): Season identifier for file naming and organization
         show (str): Show name for file naming and organization
+        image_generator: The ``core.protocols.ImageFileGenerator`` to render
+            with, shared by every frame. Production callers inject the one they
+            built for the run (``WorkflowOrchestrator``, ``main.py``). Omitted,
+            one is resolved here - once for the whole batch, not once per image.
     """
     logger.info(f"Creating {len(sentences)} images for {show} S{season}E{episode}")
+    # Resolved once and reused: a client per frame was the defect, and it also
+    # meant N identical constructions for N scenes in the offline case.
+    generator = image_generator if image_generator is not None else resolve_image_generator()
     # Generate an image for each plot point/sentence
     for index, sentence in enumerate(sentences):
-        create_image(sentence, episode, season, show, index)
+        create_image(sentence, episode, season, show, index, image_generator=generator)
 
 
 def create_image(
@@ -135,9 +196,17 @@ def create_image(
         show (str): Show name for file naming
         index (int): Image index for unique filename generation
         image_generator: Optional ``core.protocols.ImageFileGenerator`` to render
-            with. Defaults to ``build_image_generator()``, i.e. Imagen. Any
-            failure - to construct it or to use it - falls back to a placeholder
-            title card at the same path, with the reason logged.
+            with. Any failure - to construct it or to use it - falls back to a
+            placeholder title card at the same path, with the reason logged.
+
+            Every production path supplies one: ``create_images`` either
+            forwards the generator its caller built for the run or resolves one
+            for the batch, so the per-call construction below is reached only by
+            a direct ``create_image`` caller (the tests and
+            ``scripts/check_fallback_messaging.py``). It is kept so that calling
+            this function with five arguments still means what it always meant,
+            and it announces itself in the log so a broken wiring upstream shows
+            up as a per-frame construction rather than silently still working.
     """
     logger.debug(f"Creating image {index} for episode {episode}")
 
@@ -149,7 +218,13 @@ def create_image(
         # Construction is inside the try on purpose: a missing key, a missing
         # client library and a credential the SDK rejects are all reasons this
         # optional path can fail, and all of them degrade identically.
-        generator = image_generator if image_generator is not None else build_image_generator()
+        if image_generator is not None:
+            generator = image_generator
+        else:
+            logger.debug(
+                "No image generator was passed to create_image; building one for frame %d", index
+            )
+            generator = build_image_generator()
         written = generator.generate_image(image_sentence, image_path)
     except Exception as e:
         _report_image_fallback(e, image_sentence, index)
