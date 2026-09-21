@@ -30,8 +30,11 @@ What is STUBBED (external paid / network services only)
                    committed ``demo/sample_transcript.txt``. Nothing is scraped.
 * Gemini chat    - ``init_chat_model`` returns a fake model that replays
                    ``demo/canned_llm_response.json``. No key, no call.
-* Imagen         - not stubbed by this script: ``create_image`` sees no
-                   ``GOOGLE_API_KEY`` and takes its own placeholder branch.
+* Imagen         - not stubbed by this script, and not patched either: with no
+                   ``GOOGLE_API_KEY`` the injectable image generator
+                   (``media.media_utils.build_image_generator``) cannot be
+                   constructed, so ``create_image`` takes its own placeholder
+                   branch. The demo checks that before it starts.
 * Gemini TTS     - ``wave_file`` is replaced with a local synthesiser that
                    writes a real WAV. (The production no-key fallback writes
                    *silence*; a tone is used here so the reviewer can confirm
@@ -66,8 +69,27 @@ EPISODE_URL = "https://example.invalid/neon-lantern-brigade/season-1/episode-3"
 # The demo must never reach a paid service, even on a machine that has a key
 # configured. Clear the credentials the pipeline looks for *before* importing
 # anything that reads them, so create_image/wave_file take their offline paths.
-for _var in ("GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS"):
-    os.environ.pop(_var, None)
+CREDENTIAL_VARS = ("GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS")
+
+
+def clear_credentials() -> None:
+    """
+    Drop every credential the pipeline reads.
+
+    Called once here, at import, and *again* after the heavy imports, because
+    clearing before the imports is not enough on its own: `moviepy.config`
+    calls `dotenv.load_dotenv()` when it is imported, which reads the
+    repository's own `.env` and puts `GOOGLE_API_KEY` straight back. On a
+    developer machine with a key in `.env` this demo was therefore building a
+    real Imagen client and being saved only by the socket guard below - the
+    fallback message it printed said "AI generation failed" rather than "no
+    key", which is what gave it away.
+    """
+    for var in CREDENTIAL_VARS:
+        os.environ.pop(var, None)
+
+
+clear_credentials()
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +128,35 @@ def block_outbound_network() -> None:
 
     socket.socket.connect = guarded_connect  # type: ignore[method-assign]
     socket.socket.connect_ex = guarded_connect_ex  # type: ignore[method-assign]
+
+
+def enforce_offline_image_generation() -> None:
+    """
+    Make "no Imagen call" a checked claim too, not just a hope.
+
+    The demo patches nothing for images. It relies on the injectable generator
+    seam: with no credentials, ``media.media_utils.build_image_generator``
+    refuses to construct an Imagen client, and ``create_image`` renders its
+    placeholder title card instead. Importing ``media.media_utils`` pulls in
+    moviepy, so the credentials are cleared once more *after* that import (see
+    ``clear_credentials``) and the claim is then verified rather than assumed.
+
+    Without this the demo still produced the same frames, but for the wrong
+    reason: it built a real client, tried a real call, and got rescued by the
+    socket guard.
+    """
+    from media.media_utils import ImageGeneratorUnavailable, build_image_generator
+
+    clear_credentials()
+    try:
+        build_image_generator()
+    except ImageGeneratorUnavailable as exc:
+        print(f"  [check] no image generator can be built ({exc}) - frames are placeholders.")
+    else:
+        raise SystemExit(
+            "\n  DEMO ABORTED: an Imagen generator was constructible, so this run "
+            "could have billed a real image generation.\n"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +467,7 @@ async def run_demo() -> Path:
 def main() -> int:
     banner()
     block_outbound_network()
+    enforce_offline_image_generation()
 
     # Empty the directory's *contents* rather than the directory itself: in the
     # container it is a bind-mounted volume, which cannot be unlinked.

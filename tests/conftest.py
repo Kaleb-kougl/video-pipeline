@@ -194,9 +194,15 @@ def image_factory(tmp_path):
 
 class RecordingImageGenerator:
     """
-    Stand-in for a real image generator, injected through the public seam that
+    Stand-in for a real image generator, injected through the seam that
     ``core/visual_coherence_manager.py`` exposes (an async callable taking the
     enhanced prompt and returning a path).
+
+    That callable is ``core.protocols.ImageFileGenerator.generate_image`` with
+    the destination already bound - the manager only needs a file OpenCV can
+    read, so it lets the generator pick the name. ``FakeImageGenerator`` below
+    implements both views; this one stays a bare callable because the visual
+    coherence tests inject plain lambdas alongside it.
 
     The manager itself is never patched: this writes actual image files to disk
     so the OpenCV scoring, retry and reference-update logic all run for real.
@@ -233,8 +239,72 @@ def make_generator(image_factory):
 
 class FakeImageGenerator:
     """
-    Conforms to the ``generate_image(prompt)`` protocol that
-    ``core/content_cache.py`` documents for ``get_or_generate_image``.
+    A ``core.protocols.ImageFileGenerator`` that writes a real PNG with PIL.
+
+    This is the second implementation that earned the protocol its place; the
+    first is ``media.media_utils.ImagenImageGenerator``. It renders rather than
+    pretending to, so ``create_image`` -> ``mp4_file_enhanced`` can be exercised
+    end to end without a key, a client library or a socket.
+
+    It also answers the ``VisualCoherenceManager`` seam: ``__call__(prompt)`` is
+    ``generate_image`` with a destination this object picks, which is exactly
+    the relationship between the two shapes.
+    """
+
+    def __init__(
+        self,
+        directory: Path | str | None = None,
+        color: tuple[int, int, int] = (32, 64, 128),
+        size: tuple[int, int] = (1024, 768),
+        fail_with: Exception | None = None,
+    ):
+        self.directory = Path(directory) if directory is not None else None
+        self.color = color
+        self.size = size
+        self.fail_with = fail_with
+        self.prompts: list[str] = []
+        self.destinations: list[str] = []
+
+    def generate_image(self, prompt: str, destination: str) -> str:
+        from PIL import Image
+
+        self.prompts.append(prompt)
+        if self.fail_with is not None:
+            raise self.fail_with
+        self.destinations.append(destination)
+        Image.new("RGB", self.size, color=self.color).save(destination)
+        return destination
+
+    def __call__(self, prompt: str) -> str:
+        """The visual-coherence view: same render, generator-chosen path."""
+        directory = self.directory or Path.cwd()
+        directory.mkdir(parents=True, exist_ok=True)
+        return self.generate_image(prompt, str(directory / f"fake_{len(self.prompts)}.png"))
+
+    @property
+    def call_count(self) -> int:
+        return len(self.prompts)
+
+
+@pytest.fixture
+def image_generator(tmp_path) -> FakeImageGenerator:
+    """A protocol-conforming image generator that writes real PNGs, offline."""
+    return FakeImageGenerator(directory=tmp_path)
+
+
+class FakeImagePayloadSource:
+    """
+    The callback ``ContentCache.get_or_generate_image`` takes - *not* an image
+    generator, despite the method name it is duck-typed against.
+
+    ``core/content_cache.py`` asks for ``generate_image(prompt) -> dict`` and
+    then caches the dict. It never renders anything and never learns where a
+    file went; a dict literal would satisfy it. Keeping it separate from
+    ``FakeImageGenerator`` is the point: the two shapes were being called the
+    same thing, and only one of them puts a PNG on disk.
+
+    Its signature is pinned by ``docs/CONTENT_CACHING_GUIDE.md``, so it stays
+    as it is until the cache grows a second implementation of its own.
     """
 
     def __init__(self, payload: dict[str, Any] | None = None):
@@ -255,9 +325,9 @@ class FakeImageGenerator:
 
 
 @pytest.fixture
-def fake_image_generator() -> FakeImageGenerator:
-    """An image generator implementing the ``generate_image(prompt)`` protocol."""
-    return FakeImageGenerator()
+def fake_image_generator() -> FakeImagePayloadSource:
+    """The ``ContentCache`` payload callback (see ``FakeImagePayloadSource``)."""
+    return FakeImagePayloadSource()
 
 
 # ---------------------------------------------------------------------------

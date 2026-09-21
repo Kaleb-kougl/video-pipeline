@@ -9,12 +9,91 @@ import wave
 from pathlib import Path
 from pprint import pprint
 
-from google import genai
-from google.genai import types
 from moviepy import AudioFileClip, ImageClip, VideoFileClip, concatenate_videoclips
 from PIL import Image
 
+from core.protocols import ImageFileGenerator
+
+# google-genai drives the two paid boundaries in this module (Imagen frames and
+# Gemini TTS) and both of them already degrade to a locally rendered fallback.
+# It is therefore imported as an *optional* dependency: a machine without the
+# package gets placeholder slides and silent audio, not an ImportError at the
+# top of the process. `b6fde06` made the same fix for CharacterAnalysisAgent -
+# an optional path has to be optional for every reason it can fail.
+try:
+    from google import genai
+    from google.genai import types
+except ImportError as exc:  # pragma: no cover - exercised by monkeypatching
+    genai = None  # type: ignore[assignment]
+    types = None  # type: ignore[assignment]
+    _GENAI_IMPORT_ERROR: str | None = str(exc) or "google-genai is not installed"
+else:
+    _GENAI_IMPORT_ERROR = None
+
 logger = logging.getLogger(__name__)
+
+IMAGE_MODEL = "imagen-3.0-generate-002"
+
+
+class ImageGeneratorUnavailable(RuntimeError):
+    """
+    No image generator could be constructed, for whatever reason.
+
+    Carries the reason in its message so ``create_image`` can say why it is
+    drawing a title card instead of artwork. Raised before any network call, so
+    a caller that catches it has cost nothing.
+    """
+
+
+class ImagenImageGenerator:
+    """
+    The production ``core.protocols.ImageFileGenerator``: Google Imagen.
+
+    A client is built per instance from an explicit API key - never from the
+    ambient default credentials, which is what made the original inline
+    ``genai.Client()`` reach for a key that was not there.
+    """
+
+    def __init__(self, api_key: str) -> None:
+        self._client = genai.Client(api_key=api_key)
+
+    def generate_image(self, prompt: str, destination: str) -> str:
+        """Render ``prompt`` to ``destination`` and return that path."""
+        response = self._client.models.generate_images(
+            model=IMAGE_MODEL,
+            prompt=prompt,
+            config=types.GenerateImagesConfig(number_of_images=1, output_mime_type="image/png"),
+        )
+
+        generated = response.generated_images
+        if not generated:
+            raise RuntimeError("Imagen returned no images for this prompt")
+
+        generated[0].image.save(destination)
+        return destination
+
+
+def build_image_generator() -> ImageFileGenerator:
+    """
+    Construct the production image generator, or explain why there is none.
+
+    Returns:
+        An ``ImageFileGenerator`` backed by Imagen.
+
+    Raises:
+        ImageGeneratorUnavailable: If the client library is missing or no API
+            key is configured. Both are ordinary states for this project - the
+            offline demo runs in the second one - so the caller degrades rather
+            than failing.
+    """
+    if genai is None or types is None:
+        raise ImageGeneratorUnavailable(f"google-genai is not installed ({_GENAI_IMPORT_ERROR})")
+
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise ImageGeneratorUnavailable("No Google API key found")
+
+    return ImagenImageGenerator(api_key)
 
 
 def create_images(sentences: list[str], episode: str, season: str, show: str) -> None:
@@ -35,11 +114,19 @@ def create_images(sentences: list[str], episode: str, season: str, show: str) ->
         create_image(sentence, episode, season, show, index)
 
 
-def create_image(image_sentence: str, episode: str, season: str, show: str, index: int) -> None:
+def create_image(
+    image_sentence: str,
+    episode: str,
+    season: str,
+    show: str,
+    index: int,
+    image_generator: ImageFileGenerator | None = None,
+) -> None:
     """
-    Generate a single image using AI based on plot point description.
-    This function uses Google's Gemini model to create anime-style images
-    that visually represent specific scenes from the episode.
+    Generate a single image for a plot point, or draw a placeholder instead.
+
+    The renderer owns the filename - ``mp4_file_enhanced`` reopens exactly this
+    path - so the generator is handed the destination rather than choosing one.
 
     Args:
         image_sentence (str): Description of the scene to generate (enhanced prompt with style)
@@ -47,6 +134,10 @@ def create_image(image_sentence: str, episode: str, season: str, show: str, inde
         season (str): Season identifier for file naming
         show (str): Show name for file naming
         index (int): Image index for unique filename generation
+        image_generator: Optional ``core.protocols.ImageFileGenerator`` to render
+            with. Defaults to ``build_image_generator()``, i.e. Imagen. Any
+            failure - to construct it or to use it - falls back to a placeholder
+            title card at the same path, with the reason logged.
     """
     logger.debug(f"Creating image {index} for episode {episode}")
 
@@ -55,49 +146,53 @@ def create_image(image_sentence: str, episode: str, season: str, show: str, inde
     image_path = f"{show}/Season{season}/Episode{episode}/{show}_{episode}_{index}.png"
 
     try:
-        # Try AI image generation if API key is available
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            raise Exception("No Google API key found")
-
-        client = genai.Client(api_key=api_key)
-
-        response = client.models.generate_images(
-            model="imagen-3.0-generate-002",
-            prompt=image_sentence,
-            config=types.GenerateImagesConfig(number_of_images=1, output_mime_type="image/png"),
-        )
-
-        # Process successful response
-        if response.generated_images and len(response.generated_images) > 0:
-            image = response.generated_images[0].image
-            image.save(image_path)
-            logger.info(f"Generated AI image: {image_path}")
-            return
-
+        # Construction is inside the try on purpose: a missing key, a missing
+        # client library and a credential the SDK rejects are all reasons this
+        # optional path can fail, and all of them degrade identically.
+        generator = image_generator if image_generator is not None else build_image_generator()
+        written = generator.generate_image(image_sentence, image_path)
     except Exception as e:
-        error_msg = str(e)
-        if "billed users" in error_msg or "INVALID_ARGUMENT" in error_msg:
-            print(
-                f"🖼️  Using FREE PLACEHOLDER IMAGE ({index + 1}) - Upgrade to Google Cloud billing for AI-generated anime artwork"
-            )
-            logger.info(
-                f"AI image generation requires billing - creating placeholder for: {image_sentence[:50]}..."
-            )
-        elif "No Google API key found" in error_msg:
-            print(
-                f"🖼️  Using FREE PLACEHOLDER IMAGE ({index + 1}) - Add GOOGLE_API_KEY to .env for AI generation"
-            )
-            logger.warning("No Google API key found - creating placeholder")
-        else:
-            print(
-                f"🖼️  Using FREE PLACEHOLDER IMAGE ({index + 1}) - AI generation failed, using fallback"
-            )
-            logger.warning(f"AI image generation failed ({error_msg[:100]}) - creating placeholder")
+        _report_image_fallback(e, image_sentence, index)
+    else:
+        logger.info(f"Generated AI image: {written}")
+        return
 
     # Create enhanced placeholder image
     create_placeholder_image(image_sentence, image_path, index)
     logger.info(f"Created placeholder image: {image_path}")
+
+
+def _report_image_fallback(error: Exception, image_sentence: str, index: int) -> None:
+    """
+    Explain, on stdout and in the log, why a placeholder is about to be drawn.
+
+    The branches are chosen by inspecting the error text because that is what
+    the Google SDK gives us: billing state and key problems arrive as the same
+    exception type with different messages.
+    """
+    error_msg = str(error)
+    if "billed users" in error_msg or "INVALID_ARGUMENT" in error_msg:
+        print(
+            f"🖼️  Using FREE PLACEHOLDER IMAGE ({index + 1}) - Upgrade to Google Cloud billing for AI-generated anime artwork"
+        )
+        logger.info(
+            f"AI image generation requires billing - creating placeholder for: {image_sentence[:50]}..."
+        )
+    elif "No Google API key found" in error_msg:
+        print(
+            f"🖼️  Using FREE PLACEHOLDER IMAGE ({index + 1}) - Add GOOGLE_API_KEY to .env for AI generation"
+        )
+        logger.warning("No Google API key found - creating placeholder")
+    elif "google-genai is not installed" in error_msg:
+        print(
+            f"🖼️  Using FREE PLACEHOLDER IMAGE ({index + 1}) - pip install google-genai for AI generation"
+        )
+        logger.warning(f"No image generator available ({error_msg}) - creating placeholder")
+    else:
+        print(
+            f"🖼️  Using FREE PLACEHOLDER IMAGE ({index + 1}) - AI generation failed, using fallback"
+        )
+        logger.warning(f"AI image generation failed ({error_msg[:100]}) - creating placeholder")
 
 
 def create_placeholder_image(prompt: str, image_path: str, index: int):
