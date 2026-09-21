@@ -129,8 +129,14 @@ VisualCoherenceManager(consistency_threshold=0.8, image_generator=my_generator)
 `image_generator` is `Callable[[str], Union[str, Awaitable[str]]]` — it takes an
 enhanced prompt, writes an image to disk, and returns the path. Without one,
 `generate_consistent_image()` raises `NotImplementedError` rather than inventing
-a path. The orchestrator does not inject a generator, so only the prompt half is
-wired into the pipeline today.
+a path. The orchestrator does not inject one *here*, so only the prompt half of
+this manager is wired into the pipeline today.
+
+Note this is a different seam from the render generator. `59fd32d` injects an
+`ImageFileGenerator` through `create_images` into `create_image`, which is what
+actually produces the frames. The callable described above belongs to the
+coherence manager's scoring loop — it would let that loop generate, score and
+retry an image — and nothing supplies it. Two seams, one wired, one not.
 
 Actual image files are written by `create_images()` in `media/media_utils.py`,
 which calls `create_image()` per scene and falls back to

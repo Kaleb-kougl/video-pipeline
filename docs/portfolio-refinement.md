@@ -114,10 +114,11 @@ Verify with `make lint`, `make typecheck`, `make test`, `make demo`,
 
 ## Part 3 — What is still outstanding
 
-*Last verified 2026-09-19, at `c262fff`. Entries marked **[in flight]** are being
-changed in the working tree right now by concurrent work and were uncommitted
-when this was written — re-run `git log --oneline` and `git status` before
-trusting them either way.*
+*Last verified 2026-09-19, at `c262fff`, except the media-render entry under
+Structure, re-verified 2026-09-21 at `59fd32d`. Entries marked **[in flight]**
+are being changed in the working tree right now by concurrent work and were
+uncommitted when this was written — re-run `git log --oneline` and `git status`
+before trusting them either way.*
 
 ### Correctness
 
@@ -159,10 +160,19 @@ trusting them either way.*
 - **Module-level moviepy imports** in `main.py` and
   `agents/workflow_orchestrator.py` mean "instantiable in a test" still requires
   import-level surgery.
-- **The media-render seam is patched, not injected.** `e49717c` made every agent
-  collaborator injectable, but `create_images` / `mp4_file_enhanced` /
-  `wave_file` are still module-level function calls that tests monkeypatch. That
-  is the last seam, and the one the demo depends on.
+- **The media-render seam is half injected.** `e49717c` made every agent
+  collaborator injectable and left `create_images` / `mp4_file_enhanced` /
+  `wave_file` as module-level calls that tests monkeypatch. The image third of
+  that is now closed: `f2597bf` extracted `core.protocols.ImageFileGenerator`
+  and `59fd32d` wired it through, so `create_images` takes a generator and
+  forwards it to every `create_image`, `WorkflowOrchestrator` takes it as a
+  fifteenth keyword-only collaborator, and `main.py` builds one per process for
+  both the orchestrator and the season path — one Imagen client per run instead
+  of one per frame. **`wave_file` and `mp4_file_enhanced` are what is left**:
+  still module-level calls, still monkeypatched by the tests and the demo. Audio
+  and encode, not images, are now the last seam. See
+  [ADR 0002](adr/0002-additive-dependency-injection.md) for the injection
+  history and why the resolver returns a stand-in rather than `None`.
 - **The async decision is still unmade.** 27 `async def`s in `agents/`+`core/`
   (re-counted 2026-09-19, still 27) coexist with blocking `requests.get` and
   `time.sleep`. Now written up as

@@ -1,7 +1,8 @@
 # ContentCache: do not wire it in as it stands
 
-Assessed at `f22155f`. **This document replaces a plan to integrate the cache.
-That plan was wrong at its premise and is not worth building.**
+Assessed at `f22155f`; the two closing sections re-read at `59fd32d`, which
+overtook them. **This document replaces a plan to integrate the cache. That plan
+was wrong at its premise and is not worth building.**
 
 ## What the first version claimed
 
@@ -73,26 +74,41 @@ honestly rather than hidden inside "integrate the existing cache".
 
 ## What to do instead, if the goal is lower image cost
 
-**Cap the plot-point count.** `docs/operations.md` already names the unbounded
-count as the single largest source of cost variance: `create_images` fires once
-per plot point and nothing limits what the model returns. A bound plus a
-truncation before `create_images` is an hour or two and reduces worst-case spend
-immediately. It also has to land before any per-image cost claim means anything.
+~~**Cap the plot-point count.**~~ **Done, in `d58f1c7`.** This section used to
+say that `create_images` fires once per plot point and nothing limits what the
+model returns. `core.schemas.enforce_scene_cap` now truncates the list at the
+point of use on both paid paths, bounded by `VideoConfig.max_scenes` (48 by
+default and derived, not picked). Worst-case image spend is bounded and knowable
+in advance — see
+[operations.md](operations.md#what-a-run-costs-in-api-calls). Per-episode spend
+is still variable *under* that ceiling, which remains the largest single source
+of cost variance, so a cache that actually hit would still be worth something;
+it is the hit rate, not the ceiling, that this document says is zero.
 
-## What stays true from the first version
+## What stays true from the first version — and what no longer does
 
-The seam analysis. `media/media_utils.py` `create_image` constructs a Google
-client inline; `core/visual_coherence_manager.py:56` and
-`core/content_cache.py:425` both describe an injectable generator; the only
-implementation is a fake at `tests/conftest.py:248`. Extracting that adapter is
-worth doing **on its own merits** — `docs/portfolio-refinement.md` lists the
-media-render seam as the last open structural gap — and it is a prerequisite for
-any image work, including none of this.
+**The seam analysis has been overtaken by the work it argued for.** It said
+`create_image` constructs a Google client inline and the only implementation of
+the generator interface is a fake in `tests/conftest.py`. Both were true at
+`f22155f` and neither is now: `f2597bf` extracted
+`core.protocols.ImageFileGenerator` with `media.media_utils.ImagenImageGenerator`
+behind it, and `59fd32d` injected it in production — `create_images` forwards
+one generator to every `create_image`, resolved once per run by
+`WorkflowOrchestrator` and `main.py`. The claim that extracting the adapter was
+worth doing on its own merits held up; it is simply no longer a prerequisite
+anyone has to schedule.
 
-One correction to carry into it: the two seams have **different shapes**. The
-content-cache protocol returns a dict; the coherence-manager seam returns a path.
-They are both called "the generator seam" and they are not the same interface.
-Phase 1 has to pick one, and bytes-or-path is the decision.
+**The correction that mattered most stays true, and is now load-bearing.** The
+two seams have **different shapes**. The extracted one —
+`generate_image(prompt, destination) -> str` in `core/protocols.py`, injectable
+at `core/visual_coherence_manager.py:56` — returns a path. The content-cache
+seam (`ContentCache.get_or_generate_image`, `core/content_cache.py:425`) calls
+`generate_image(prompt)` and expects a **dict** payload back; its fake is
+deliberately named `FakeImagePayloadSource` for exactly that reason. The
+bytes-or-path decision was settled as *path*, and it was settled for the render
+seam only. So wiring this cache in still means writing an adapter between two
+interfaces that share a method name and nothing else — which is one more reason
+the integration is not the small job the first version described.
 
 ## Why this document still exists
 

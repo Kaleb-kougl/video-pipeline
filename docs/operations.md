@@ -4,11 +4,12 @@ What a run costs before you start it, what the instrument measures, and what it
 does not. Derived from `core/telemetry.py`, `agents/workflow_orchestrator.py`,
 `config/settings.py`, `core/schemas.py`, `main.py` and `media/media_utils.py`,
 re-read against the scene cap at `d58f1c7` and the image-generator seam at
-`f2597bf`.
+`f2597bf`, then again at `59fd32d`, which moved generator construction to the
+composition root.
 [telemetry.md](telemetry.md) is the design rationale; this file is the operator
 view. For procedures see [runbook.md](runbook.md).
 
-<!-- verified: 1875ce6 sources: core/telemetry.py, agents/workflow_orchestrator.py, media/media_utils.py, config/settings.py, core/schemas.py, main.py -->
+<!-- verified: 59fd32d sources: core/telemetry.py, agents/workflow_orchestrator.py, media/media_utils.py, config/settings.py, core/schemas.py, main.py -->
 
 ## What a run costs in API calls
 
@@ -81,6 +82,16 @@ from one call to `max_scenes` and remains the largest single source of cost
 variance in a run. The change made that variance bounded and knowable in
 advance; it did not make it fixed. `max_scenes` is the number to take to a
 worst-case billing estimate, not the number to expect from a typical run.
+
+**One client per run is not a cost change.** Since `59fd32d` the Imagen client
+is constructed once, at the composition root, and forwarded to every frame
+(`media.media_utils.resolve_image_generator` → `create_images` →
+`create_image`); before that `create_image` built one per image, so a
+twelve-scene episode built twelve. Constructing a client is not a billed call,
+so the table above is unchanged — the bill is still one `generate_images`
+request per scene. What changed is that N clients became one, and that the
+*reason* an unavailable generator gives is now decided once per run rather than
+re-derived per frame. The per-frame messages are identical either way.
 
 A season batch is this multiplied by the number of episodes not skipped. A
 resumed run pays nothing for an episode recorded as `succeeded`: no discovery,
@@ -203,9 +214,12 @@ replayed; `image_generation` at 0.33 s is PIL drawing title cards;
 `audio_synthesis` is a locally synthesised tone; `character_enrichment` at ~0 is
 a canned dictionary. One caveat on that 0.33 s: it was measured before
 `f2597bf`, when the demo was still building a real Imagen client per frame and
-having the connection blocked by its own socket guard, so it covers a little
-work the demo no longer does. The order of magnitude is unaffected — it is
-still PIL — but the table has not been re-measured. The resulting 94.9% share for `video_encode` is an artifact
+having the connection blocked by its own socket guard, so it covers work the
+demo no longer does — and `59fd32d` removed the rest of it, since the stage now
+holds a generator resolved once at construction and each frame only re-raises
+the stored reason. The order of magnitude is unaffected — it is still PIL — but
+the table has not been re-measured, and if anything it now overstates the
+stage. The resulting 94.9% share for `video_encode` is an artifact
 of everything else being faked — **do not read it as "the pipeline is
 encode-bound"**.
 

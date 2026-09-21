@@ -2,10 +2,15 @@
 
 Assessed at `f22155f`. **Revised after review: the model recommendation changed
 and most of the performance figures in the first version were wrong.**
+Re-read at `59fd32d`: Phase 1 has since been built, so the plan now starts at
+Phase 2. Everything below Phase 1 was re-checked against that tree and stands
+unless marked.
 
-Depends on the generator adapter described in
-[content-cache-plan.md](content-cache-plan.md) — build that once, regardless of
-whether this proceeds.
+Phase 1 was the generator adapter described in
+[content-cache-plan.md](content-cache-plan.md). It exists:
+`core.protocols.ImageFileGenerator`, with `media.media_utils.ImagenImageGenerator`
+behind it and a run-scoped instance injected from `main.py` and
+`WorkflowOrchestrator`.
 
 ## What the first version got wrong
 
@@ -46,20 +51,41 @@ will not close the gap.
 
 ## Phases
 
-### Phase 1 — the generator adapter (shared, ~half a day)
+### Phase 1 — the generator adapter (shared, ~half a day) — **done**
 
-Extract the inline Google client in `media/media_utils.py` `create_image` behind
-an injectable generator. **Settle the interface shape first**: the content-cache
-protocol returns a dict, the coherence-manager seam returns a path, and they are
-not the same thing. Pick bytes, and make the existing fake conform.
+Landed in two commits rather than one, and the interface question was decided
+against this plan's recommendation.
 
-Worth doing whether or not any local backend follows — it is the last open
-structural seam in `docs/portfolio-refinement.md`, and it lets the demo and tests
-inject rather than monkeypatch.
+`f2597bf` extracted the inline Google client from `create_image` behind
+`core.protocols.ImageFileGenerator`, and `59fd32d` made production use it:
+`create_images` takes a generator and forwards it to every `create_image`,
+`WorkflowOrchestrator` takes it as a keyword-only collaborator, and `main.py`
+builds one per process for both the orchestrator and the season path. An Imagen
+client is built once per run instead of once per frame, and the demo and the
+tests inject instead of monkeypatching — the wiring test asserts that by
+failing if `build_image_generator` is called at all.
+
+**The shape is a path, not bytes.** `generate_image(prompt, destination) -> str`
+writes the file and returns where it wrote it. This plan recommended bytes; the
+render seam it had to match already wrote files (`create_image` names the
+destination, and `mp4_file_enhanced` reopens those exact paths), so bytes would
+have added an encode/decode hop for no caller. The content-cache seam, which
+returns a dict, was left alone rather than bent to fit — see
+[content-cache-plan.md](content-cache-plan.md).
+
+**Two consequences for Phase 2**, both in its favour:
+
+- The injection point already exists, so a local backend is a class plus a
+  composition-root choice, with no plumbing to change.
+- Construction is already run-scoped, which is exactly the residency Phase 2
+  needs — the model gets loaded once per run for free rather than needing a
+  cache bolted on.
 
 ### Phase 2 — the local backend (~1–2 days)
 
-A second implementation behind that interface. Decisions to make explicitly:
+A second implementation of `core.protocols.ImageFileGenerator`: take a prompt
+and a destination path, write a PNG there, return the path. Decisions to make
+explicitly:
 
 - **Steps and guidance.** Lightning is 4–8 steps. If FLUX: 4 steps,
   `guidance_scale=0.0` (it is guidance-distilled; the dev default degrades it) and
@@ -79,9 +105,14 @@ A second implementation behind that interface. Decisions to make explicitly:
 ### Phase 3 — selection and fallback (~half a day)
 
 A setting choosing Imagen, local, or the existing placeholder renderer, defaulting
-to Imagen. The `b6fde06` lesson applies directly: missing `diffusers`, absent
+to Imagen — read where `media.media_utils.resolve_image_generator` is called, so
+the choice is made once per run at the composition root and nothing downstream
+branches. The `b6fde06` lesson applies directly: missing `diffusers`, absent
 weights, insufficient memory and an MPS failure are four causes and each should
-degrade with its reason logged.
+degrade with its reason logged. `59fd32d` supplies the pattern as well as the
+lesson: an unbuildable generator becomes an `UnavailableImageGenerator` carrying
+the reason, which re-raises per frame into the existing placeholder branch, so a
+local backend that cannot start degrades exactly like a missing API key.
 
 **Add a fifth: swapping away from Imagen removes its content filtering.**
 FluxPipeline ships no safety checker, and this pipeline feeds it text derived from
@@ -99,7 +130,9 @@ model load plus graph compilation.
 
 - CI must not download tens of GB; the parity guard already forces offline mode.
 - `make demo` must keep working with no model present.
-- `requirements-demo.txt` must not grow.
+- `requirements-demo.txt` must not grow. It has in fact shrunk: `3005fc4`
+  dropped the `google-genai` pin, which was only there because
+  `agents/video_agent.py` imported it unguarded at module scope.
 - `diffusers` and `accelerate` are unpinned and absent; FluxPipeline needs
   diffusers ≥0.30, and the T5 tokenizer wants `sentencepiece`, which is not in
   `requirements.txt`.
@@ -122,7 +155,8 @@ this actually buys is a pluggable backend, a measured comparison between two rea
 implementations, and images that cost nothing at the margin.
 
 Whether that is worth two or three days on a portfolio piece is a real question.
-Phase 1 is worth doing regardless. Phases 2–4 are a weekend project that produces
+Phase 1 was worth doing regardless, and has been done, so what is left is two
+days rather than two and a half. Phases 2–4 are a weekend project that produces
 a good story **only if Phase 4's measurement actually happens** — without it, this
 is a second code path with no evidence attached, which is the pattern this repo
 spent forty commits removing.

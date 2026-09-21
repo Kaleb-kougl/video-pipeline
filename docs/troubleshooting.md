@@ -2,11 +2,11 @@
 
 Failure modes that have actually happened, each as **symptom → cause → action**.
 Every one was checked against the source at `7e48b43`, and the paid-path
-section re-read against `d58f1c7` and `f2597bf`; where the behaviour is
-surprising the file and function that produces it is named so you can confirm it
-yourself.
+section re-read against `d58f1c7`, `f2597bf` and, for where the image generator
+is now built, `59fd32d`; where the behaviour is surprising the file and function
+that produces it is named so you can confirm it yourself.
 
-<!-- verified: 1875ce6 sources: main.py, agents/transcript_source_agent.py, agents/character_analysis_agent.py, agents/workflow_orchestrator.py, media/media_utils.py, core/schemas.py, config/settings.py -->
+<!-- verified: 59fd32d sources: main.py, agents/transcript_source_agent.py, agents/character_analysis_agent.py, agents/workflow_orchestrator.py, media/media_utils.py, core/schemas.py, config/settings.py -->
 
 For normal operation see [runbook.md](runbook.md).
 
@@ -201,18 +201,32 @@ narration. `🖼️ Using FREE PLACEHOLDER IMAGE` / `🎤 Using FREE SILENT AUDI
 the output.
 
 **Cause.** `create_image` and `wave_file` catch every exception and fall back.
-`create_image` distinguishes **four** cases in the printed message (see
-`_report_image_fallback`): no `GOOGLE_API_KEY`, a `billed users` /
+`create_image` distinguishes **four** cases in the printed message (still four
+branches in `_report_image_fallback`): no `GOOGLE_API_KEY`, a `billed users` /
 `INVALID_ARGUMENT` response (Imagen and Gemini TTS require a billing-enabled
-project), `google-genai` not installed at all, or any other failure. Since
-`f2597bf` the generator is *constructed* inside the same `try`
-(`build_image_generator`), so a missing key, a missing client library and a
-credential the SDK refuses to build a client from all reach the placeholder with
-the reason logged, instead of the missing package raising at import time. An
-Imagen response carrying zero images now raises into the "AI generation failed"
-branch as well: it used to fall out of the `try` and draw a placeholder while
-printing and logging nothing, which was the one way to get an unexplained title
-card.
+project), `google-genai` not installed at all, or any other failure. Every one
+of them reaches the placeholder with its reason logged, instead of the missing
+package raising at import time.
+
+**Where the generator is built has moved, and the messages have not.** Since
+`59fd32d` production builds one per *run*, not one per frame: `main.py` and
+`WorkflowOrchestrator.__init__` call `media.media_utils.resolve_image_generator`
+once at construction and the object is forwarded through `create_images` to
+every `create_image`. That call never raises — when no client can be built it
+returns an `UnavailableImageGenerator` holding the reason, and
+`UnavailableImageGenerator.generate_image` re-raises it inside the `try` that
+`create_image` has always had. So a missing key, a missing client library and a
+credential the SDK refuses still produce the same four branches, the same
+printed lines and the same one-message-per-frame behaviour they did when
+`build_image_generator` ran inside that `try`. The per-call construction
+described at `f2597bf` survives only for a direct `create_image` caller that
+passes no generator (the tests and
+`scripts/check_fallback_messaging.py`); it logs at DEBUG when it fires, so a
+broken wiring upstream shows up as a per-frame construction rather than silently
+still working. An Imagen response carrying zero images raises into the "AI
+generation failed" branch as well: it used to fall out of the `try` and draw a
+placeholder while printing and logging nothing, which was the one way to get an
+unexplained title card.
 
 **Action.** Read the printed line — it says which. Note the pipeline still
 reports the episode as **succeeded**: the fallback is a deliberate degradation,

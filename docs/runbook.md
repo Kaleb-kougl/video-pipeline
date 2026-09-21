@@ -2,25 +2,39 @@
 
 Normal operating procedures. Every command here was run, or read off the source
 that implements it, at `d98476a`; the demo section was re-read against
-`f2597bf`. For failures see
+`f2597bf` and `59fd32d`, and the dependency notes against `3005fc4`. For
+failures see
 [troubleshooting.md](troubleshooting.md); for cost and latency see
 [operations.md](operations.md); for what the database holds see
 [data-model.md](data-model.md).
 
-<!-- verified: 1875ce6 sources: main.py, core/database.py, core/schemas.py, core/telemetry.py, scripts/demo.py, config/settings.py -->
+<!-- verified: 59fd32d sources: main.py, core/database.py, core/schemas.py, core/telemetry.py, scripts/demo.py, config/settings.py -->
 
 ## Before you start
 
 | Check | Command | Expect |
 |---|---|---|
 | Interpreter | `python -V` | 3.11 or 3.12. Nothing else has wheels — see the guard in `Makefile` |
-| Environment | `make install` | Full deps (~1.1 GB). `make install-demo` is the ~0.3 GB subset and is **not** enough to run the CLI |
+| Environment | `make install` | Full deps (~1.1 GB). `make install-demo` is the ~0.3 GB subset: enough for `make demo`, **not** enough for a real run |
 | Credentials | `cat .env.example` | `GOOGLE_API_KEY` is what the paid path needs |
 | Nothing works yet? | `make demo` | Renders an MP4 offline with no key and no network |
 
-`make install-demo` deliberately omits ChromaDB. `python main.py <anything>`
-constructs `CharacterAnalysisAgent`, which raises `ImportError` without it — see
-[troubleshooting.md](troubleshooting.md#every-cli-command-dies-with-importerror-chromadb-not-available).
+`make install-demo` deliberately omits ChromaDB, the Gemini provider package and
+google-genai. The CLI **starts** on that set — every one of those imports is
+guarded now, the last of them in `3005fc4` — but it starts degraded, and the
+degradation is logged rather than raised:
+
+| Missing | What `python main.py …` does | Log line |
+|---|---|---|
+| ChromaDB / sentence-transformers | Character enrichment off, uniform scene timing | `Character analysis disabled …` |
+| `langchain-google-genai` | No chat model, so no summarisation and no content analysis | `AI model not available: …` |
+| google-genai | Every frame is a placeholder title card | `No image generator for this run …` |
+
+So a `--full` run on the demo set produces a video with no model-written summary
+and no artwork, and reports success. Use `make install` for real work; see
+[troubleshooting.md](troubleshooting.md#character-analysis-is-skipped-and-the-log-says-chromadb-is-unavailable)
+for the first row. (Until `541e86a` and `b6fde06` the first row really did kill
+every subcommand at construction, which is what this note used to say.)
 
 ## One episode
 
@@ -230,7 +244,12 @@ fallback line reading "AI generation failed" rather than "no key".
 Both offline claims are checked rather than promised. `socket.connect` is
 monkeypatched so an off-box call raises `DemoMadeANetworkCall`, and
 `enforce_offline_image_generation` calls `build_image_generator()` up front and
-aborts the run unless it raises `ImageGeneratorUnavailable`. Its first step
+aborts the run unless it raises `ImageGeneratorUnavailable`. That preflight is
+now also what the run itself sees: since `59fd32d` the orchestrator resolves one
+generator at construction, so with the credentials cleared it holds an
+`UnavailableImageGenerator` for the whole run and each frame re-raises the same
+stored reason — the same `no key` fallback line, once per scene, as when a
+client was attempted per frame. Its first step
 renders the branding intro clip through a real MoviePy encode, which doubles as
 an ffmpeg preflight before the main render starts.
 

@@ -97,3 +97,64 @@ to `create_image`, so no production caller injects one yet, and `create_images`,
 the demo monkeypatch. The other accepted costs are untouched:
 `ImageFileGenerator` is not a `WorkflowOrchestrator` parameter, so the ten
 `Any`-typed parameters and the fourteen keyword-only ones are unchanged.
+
+## Update — 2026-09-21 (`59fd32d`, `3005fc4`)
+
+A second note rather than an edit to the first, on the precedent the first note
+set. That note is a dated record of `f2597bf` and cites that commit as its
+primary source; its closing paragraph is now wrong, and rewriting it in place
+would leave a section headed by one commit describing a tree produced by
+another — the same objection it raises against editing the Decision. Two running
+counts above are wrong as written for the same reason ("fourteen today" in
+Consequences, "the fourteen keyword-only ones" in the first update). They are
+corrected here, not edited, exactly as the protocol count was.
+
+**The debt the first update recorded is paid.** `create_images` now takes an
+optional `image_generator` and forwards it to every `create_image`, so the one
+function every production caller goes through no longer routes around the seam.
+`WorkflowOrchestrator` takes `image_generator` as a keyword-only collaborator
+like the rest, and `main.py` builds one per process and hands it to both the
+orchestrator and the season-summary path. **An Imagen client is now constructed
+once per run rather than once per frame**: a twelve-scene episode used to build
+twelve identical clients, and no caller could substitute any of them.
+
+**The constructor is fifteen keyword-only parameters, not fourteen.** Thirteen
+at `e49717c`, fourteen with `telemetry` (`c262fff`), fifteen with
+`image_generator` (`59fd32d`). The accepted cost "additive injection grows the
+signature by one per collaborator, forever" is being paid on schedule, and a
+grouped config object is still not worth the churn. **Ten are still typed
+`Any`** — `image_generator` is `ImageFileGenerator`, so it is the fourth
+parameter with a protocol behind it rather than an eleventh `Any`.
+
+**The accepted cost "the media-render seam is still patched, not injected" is
+now true of two functions, not three.** `wave_file` and `mp4_file_enhanced`
+remain module-level calls that the tests and the demo monkeypatch; audio and
+encode are what is left of that seam. `create_images` has left it, and the
+distinction that matters is not that a parameter exists — it existed at
+`f2597bf` too — but that production supplies it. The wiring test asserts that by
+recording calls to `build_image_generator` and failing if any happened, because
+`create_image` catches broadly and a bare assertion would have been swallowed
+into a placeholder.
+
+**The additive rule held, with one deliberate extension.** `image_generator`
+defaults to `None` and the fallback tests `is not None`, so
+`WorkflowOrchestrator()` and the four-argument `create_images(...)` still mean
+what they always meant. But `media.media_utils.resolve_image_generator` never
+raises: with no key, or no client library, it returns an
+`UnavailableImageGenerator` carrying the reason, which re-raises at the point
+`create_image` already handles it. A run therefore always holds an object, and
+`None` keeps one meaning at a call site — "nobody wired a generator", a defect —
+instead of also meaning "the wiring ran and there is none", which is an ordinary
+offline Tuesday. The four `_report_image_fallback` branches and their printed
+messages are byte-identical either way.
+
+**Construction moved to the point of use at the other client too (`3005fc4`).**
+`VideoGenerationAgent` built a Gemini client in its constructor; it now calls
+`VideoGenerationAgent.build_client`, which raises `GeminiClientUnavailable`
+naming the package and the install command. That is the shape
+`build_image_generator` already had, and it is what let the module-scope
+`from google import genai` become a guarded import — until then the orchestrator
+imported that agent, so importing the orchestrator hard-required google-genai
+even though nothing on the path used it. No protocol was added, and the ADR's
+bar is why: nothing reads `self.client`, so there is no second implementation to
+substitute and nothing to type against.
