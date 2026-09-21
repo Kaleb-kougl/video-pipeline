@@ -52,8 +52,8 @@ states what it would change and what it deliberately does not.
 
 | File | What it is |
 |---|---|
-| **[content-cache-plan.md](content-cache-plan.md)** | Wiring `ContentCache` into the image path. It is fully built, tested, and has zero callers, so every scene is generated from scratch. Four phases, the last gated on looking at the output — a similarity hit returns a *different* scene's image. |
-| **[local-image-backend-plan.md](local-image-backend-plan.md)** | A local FLUX.1-schnell backend behind the same generator seam. Depends on Phase 1 of the cache plan; both need the same adapter and it should be built once. |
+| **[content-cache-plan.md](content-cache-plan.md)** | **A decision not to build.** `ContentCache` is 730 lines, well tested and unused, but its exact-hash key includes the episode context so hits cannot cross episodes, and its similarity path scores against a hardcoded 17-word vocabulary. Records why, and what would actually be required. |
+| **[local-image-backend-plan.md](local-image-backend-plan.md)** | A local image backend behind an injectable generator seam. Revised after review: SDXL-Lightning rather than FLUX.1-schnell, with the first version's performance figures corrected. |
 | **[documentation-plan.md](documentation-plan.md)** | The documentation programme. Phases 1, 2, 3 and 5 are done; Phase 4 (a generated reference site) was declined on the record for a portfolio piece. |
 
 ## History — not current state

@@ -1,131 +1,102 @@
-# Plan: wire ContentCache into the image path
+# ContentCache: do not wire it in as it stands
 
-Assessed at `0e97006`. This is the cheaper of the two image-cost changes and
-should land first — it reduces spend whether generation stays on Imagen or moves
-local.
+Assessed at `f22155f`. **This document replaces a plan to integrate the cache.
+That plan was wrong at its premise and is not worth building.**
 
-## Current state
+## What the first version claimed
 
-`core/content_cache.py` is 700 lines, well covered by unit tests, and **has zero
-production callers**. A grep outside its own module and the test suite returns
-nothing. Every scene is generated from scratch, including scenes an adjacent
-episode of the same show already paid for.
+That `ContentCache` is fully built and unused, that adjacent episodes of the same
+show request near-identical scenes, and that wiring it in would cut image spend.
+Four phases, ~1.5 days.
 
-What exists and works:
+The premise came from the README's description of the cache. The matching code
+was never read. That is the same failure this repo has caught repeatedly —
+trusting a document about the code instead of the code.
 
-| Piece | Where |
-|---|---|
-| `cache_content`, `get_cached_content`, `find_similar_content` | `core/content_cache.py` |
-| `get_or_generate_image(prompt, image_generator, episode_context)` | `core/content_cache.py:425` |
-| `SimilarityCalculator` — 0.7 keyword / 0.3 text weighting, 0.85 threshold | same file |
-| TTL + LRU eviction, `save_to_disk` / `load_from_disk` | same file |
-| `CacheStats.hit_rate` | same file |
+## What the code actually does
 
-The image path it needs to intercept:
+**Exact-hash hits cannot cross episodes.** `core/content_cache.py:447`:
 
-- `media/media_utils.py` `create_images(sentences, episode, season, show)` loops
-  over plot points calling `create_image(sentence, episode, season, show, index)`
-- `create_image` calls Imagen directly and writes a PNG to a path derived from
-  show/season/episode/index
-- Production callers: `agents/workflow_orchestrator.py:596` and `main.py`
+<!-- docs-check: skip - quoted from the source to show the key's shape -->
+```python
+image_content = {"prompt": prompt, "episode_context": episode_context}
+content_hash = self._generate_content_hash(image_content, ContentType.IMAGE)
+```
 
-## The problem to solve first
+The episode context is *inside the key*. Two episodes producing a byte-identical
+prompt still hash differently, by construction. The saving the plan was built on
+is unreachable through the hash path.
 
-**`get_or_generate_image` returns content; `create_image` writes files.** The
-cache is keyed by prompt hash and hands back a cached value, while the renderer
-expects a PNG at a deterministic path that `mp4_file_enhanced` later reads. These
-are different contracts and the plan is mostly about reconciling them.
+**The similarity path can cross episodes, and matches on boilerplate.**
+Line 457 calls `find_similar_content({"prompt": prompt}, ...)`, dropping the
+episode context. Scoring is `keyword * 0.7 + text * 0.3`, where keywords are the
+intersection with a hardcoded 17-word vocabulary:
 
-Two options, and the choice determines everything downstream:
+> anime, style, forest, village, training, battle, character, scene, background,
+> lighting, color, ninja, magic, power, emotion, dramatic
 
-1. **Cache stores bytes.** A hit writes a fresh copy to the new path. Simple,
-   self-contained, costs disk proportional to hits.
-2. **Cache stores paths.** A hit copies or hardlinks an existing file. Cheaper on
-   disk, but the cache now owns references to files under gitignored show
-   directories that the user may delete, so every read needs an existence check
-   and a miss path.
+Two things follow. First, `_create_enhanced_prompt` in
+`core/visual_coherence_manager.py` appends constant text to every prompt —
+"Create in consistent anime art style. Maintain visual consistency…" — so every
+prompt contains *anime*, *style*, *character* and *scene* regardless of content.
+Two unrelated scenes therefore intersect on that boilerplate and can reach a
+keyword score of 1.0, which is 0.7 of 0.85 before any text comparison. Second,
+prompts containing none of the 17 words score 0.0 and can never match, however
+similar they are.
 
-**Recommendation: bytes.** The cache already serialises content to JSON on disk
-and already has TTL/LRU eviction sized in entries; paths would make eviction and
-staleness two different problems. Decide this before writing code.
+So the only path that can hit across episodes is the one that hits for the wrong
+reason, and `village` and `ninja` in a supposedly general vocabulary show what it
+was tuned against.
 
-## The risk nobody has raised yet
+**The prompts are near-unique anyway.** The varying part of each prompt is a plot
+point produced fresh by a nondeterministic model call per episode. Two episodes
+will not emit byte-identical sentences.
 
-A 0.85 similarity threshold means a *near* match returns **a different scene's
-image**. That is the feature — adjacent episodes request visually similar scenes
-— but it is also a quality decision that has never been looked at in output.
+## The honest conclusion
 
-Two scenes that score 0.86 may be describing meaningfully different moments, and
-reusing a frame across them will read as a rendering bug, not a saving. Before
-enabling similarity matching in production, generate a season with the cache on
-and **look at the frames**. The threshold is configurable for a reason; exact-hash
-hits are free of this risk and similarity hits are not.
+The realistic exact-hash hit rate across episodes is **zero**, not low. Wiring
+the cache in as designed would take about a day and a half to instrument a
+measurement of nothing.
 
-An honest fallback if the frames look wrong: ship exact-hash caching only, and
-leave similarity behind a flag that defaults off. That still captures the
-identical-prompt case, which is the common one within a season.
+Making it actually work is a different, larger job than "wire it in":
 
-## Phases
+1. Remove `episode_context` from the hash key, or accept that hits are
+   episode-scoped and find a saving that lives inside one episode.
+2. Replace `_extract_visual_keywords` with something that is not a hardcoded
+   vocabulary from one show — embeddings, or scene-noun extraction.
+3. Re-tune the threshold against real output, since 0.85 means something
+   different once scoring changes.
+4. Only then measure a hit rate.
 
-### Phase 1 — an adapter, no behaviour change (~half a day)
+That is a genuine piece of work with a real payoff, and it should be scoped
+honestly rather than hidden inside "integrate the existing cache".
 
-Add an image-generator object that implements the documented protocol —
-`generate_image(prompt)` returning a dict — and wraps the existing Imagen call.
-The only implementation today is a test fake at `tests/conftest.py:248`, which
-already pins the interface.
+## What to do instead, if the goal is lower image cost
 
-`create_image` then calls through that object rather than constructing a client
-inline. No caching yet. This is the change that makes everything else possible,
-and it is independently useful: it is the same seam the local-backend plan needs.
+**Cap the plot-point count.** `docs/operations.md` already names the unbounded
+count as the single largest source of cost variance: `create_images` fires once
+per plot point and nothing limits what the model returns. A bound plus a
+truncation before `create_images` is an hour or two and reduces worst-case spend
+immediately. It also has to land before any per-image cost claim means anything.
 
-Land it green with the demo still rendering.
+## What stays true from the first version
 
-### Phase 2 — cache on exact hash only (~half a day)
+The seam analysis. `media/media_utils.py` `create_image` constructs a Google
+client inline; `core/visual_coherence_manager.py:56` and
+`core/content_cache.py:425` both describe an injectable generator; the only
+implementation is a fake at `tests/conftest.py:248`. Extracting that adapter is
+worth doing **on its own merits** — `docs/portfolio-refinement.md` lists the
+media-render seam as the last open structural gap — and it is a prerequisite for
+any image work, including none of this.
 
-Route `create_image` through `get_or_generate_image` with the similarity
-threshold set so that only exact-hash hits return. Write the returned bytes to
-the expected path.
+One correction to carry into it: the two seams have **different shapes**. The
+content-cache protocol returns a dict; the coherence-manager seam returns a path.
+They are both called "the generator seam" and they are not the same interface.
+Phase 1 has to pick one, and bytes-or-path is the decision.
 
-Decide and document the cache lifetime: per-run, per-show, or global. Per-show is
-the useful unit, since the saving comes from adjacent episodes of the same show
-and cross-show reuse is the case most likely to look wrong.
+## Why this document still exists
 
-Wire `save_to_disk` / `load_from_disk` so the cache survives between runs — a
-cache that dies with the process saves nothing on the batch it is meant to help.
-
-### Phase 3 — measure it (~half a day)
-
-`CacheStats.hit_rate` exists and nothing reports it. Add the hit rate and the
-avoided-call count to the telemetry summary that `core/telemetry.py` already
-prints, so the saving is observed rather than asserted.
-
-**This is the phase that makes the feature worth writing about.** The README
-currently says the cache exists and is not wired in, and explicitly claims no
-savings figure because none is measured. After this phase there is a real number,
-produced the same way as every other number in the repo.
-
-### Phase 4 — similarity, gated on looking at the output (~half a day)
-
-Only after Phase 3 gives a baseline. Enable similarity matching behind a setting,
-generate a season, compare frames, and record what the threshold does to both hit
-rate and visible quality. If the frames are wrong, say so and leave it off — a
-documented "we tried it and it reused the wrong scene" is a better artifact than
-a silent flag.
-
-## Tests
-
-- The adapter satisfies the same protocol as the fake in `tests/conftest.py`
-- A cache hit writes a byte-identical file to the new path and makes no API call
-- A miss calls the generator exactly once and stores the result
-- Eviction and TTL behave under the configured limits
-- The demo path still renders offline with the cache enabled
-
-The CI-parity guard in `tests/conftest.py` will reject any test that writes to the
-repo's real `data/` directory, so the on-disk cache needs a `tmp_path` location in
-tests and a configurable directory in production.
-
-## What this does not do
-
-It does not reduce the cost of the *first* generation of any scene, does not cap
-the unbounded image count per episode (that is a separate fix at the plot-point
-level), and does nothing for the text or TTS calls.
+Deleting it would hide a real finding: a 730-line, well-tested, entirely unused
+subsystem whose two lookup paths each defeat its stated purpose in a different
+way. That is worth more as a written diagnosis than as a silently abandoned
+branch.

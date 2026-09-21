@@ -1,122 +1,128 @@
-# Plan: a local FLUX.1-schnell image backend
+# Plan: a local image backend
 
-Assessed at `0e97006`. Depends on Phase 1 of
-[content-cache-plan.md](content-cache-plan.md) — both need the same generator
-seam, and it should be built once.
+Assessed at `f22155f`. **Revised after review: the model recommendation changed
+and most of the performance figures in the first version were wrong.**
 
-## Why this is cheaper than it looks
+Depends on the generator adapter described in
+[content-cache-plan.md](content-cache-plan.md) — build that once, regardless of
+whether this proceeds.
 
-`torch==2.7.1` and `transformers==4.54.0` are already hard dependencies in
-`requirements.txt`. The 1.1 GB install everyone already pays for covers the
-expensive part; this adds `diffusers` and `accelerate`, which are small.
+## What the first version got wrong
 
-The target hardware is an **M1 Max with 64 GB unified memory**. FLUX.1-schnell is
-roughly 24 GB in bf16, so it fits with room to spare — on a 16 GB machine this
-plan would not be viable and SDXL would be the honest recommendation instead.
+Worth stating, because the errors were all in the same direction — optimistic
+about hardware I had not measured.
 
-**Licensing matters here and the variants differ.** FLUX.1-schnell is released
-under Apache 2.0, which permits commercial use. FLUX.1-dev is a non-commercial
-licence. This plan is specifically for *schnell*; substituting *dev* changes what
-you are allowed to do with the output and should not be done casually.
+| Claim | Reality |
+|---|---|
+| ~30–60s per 1024² image, FLUX.1-schnell, M1 Max | That is roughly the figure for **SDXL**. schnell is a 12B transformer at ~110 TFLOPs/step against maybe 5–7 TFLOPS sustained through MPS: closer to **3–6 minutes per image**, so 20–90 min per episode |
+| ~24 GB in bf16, "fits comfortably in 64 GB" | 24 GB is the transformer alone. Plus T5-XXL ~9.5 GB, CLIP-L, VAE ≈ **33.5 GB**, peaking near 38–42 GB with activations — against a macOS GPU-wired limit of roughly 2/3 of RAM. Exceeding it swaps rather than failing, so you get a twenty-minute image and no error |
+| Prompt-derived seeds make cache correctness testable | **Bit-identical reproducibility is not achievable on MPS.** No deterministic-algorithms coverage, MPS RNG differs from CPU, kernel selection can vary. Same seed gives perceptually identical output, not identical bytes |
+| "runnable with no API key at full quality" | False. Content generation is stage 2 and has no offline substitute; `GOOGLE_API_KEY` is still required. This removes one of three paid calls |
+| "the demo image stays ~330 MB" | That figure exists nowhere. The `Dockerfile` header says ~500 MB, and says it is an estimate |
+| "cost — a real measured number for Imagen" | Imagen is **not metered**. `docs/operations.md` marks it so, and records that no live paid run has ever been made |
+| "the derivative-work position `docs/adr/` records as open" | No ADR covers it. That question is in `docs/portfolio-refinement.md` as an open gap |
 
-## Current state of the seam
+## Revised recommendation: SDXL-Lightning, not FLUX
 
-Two injection points exist and the paid path uses neither:
+For stylized narrative illustration, offline, 5–15 frames per episode:
 
-- `core/visual_coherence_manager.py:56` accepts an injected image generator
-- `core/content_cache.py:425` documents a `generate_image(prompt)` protocol
-- The only implementation is a test fake at `tests/conftest.py:248`
-- `media/media_utils.py` `create_image` constructs a Google client inline and
-  calls Imagen directly
+| Option | Size | Per image | Licence |
+|---|---|---|---|
+| **SDXL-Lightning** (LoRA over an SDXL illustration finetune) | ~7 GB fp16 | ~5–15s, 4–8 steps | Apache-2.0 LoRA; base licence varies |
+| SDXL base/finetune, 25–30 steps | ~7 GB | ~30–60s | OpenRAIL++-M, commercial use with restrictions |
+| SD 3.5-medium | ~5 GB | middle | Stability Community Licence, free under $1M revenue |
+| FLUX.1-schnell | ~33 GB total | ~3–6 min | Apache-2.0 |
+| SDXL-Turbo | ~7 GB | seconds | **Non-commercial** — same trap as FLUX-dev |
 
-So the architecture for swapping generators is already described in three places
-and routed around in the one place that spends money.
+SDXL-Lightning is 20–50x faster than schnell here for arguably better stylized
+output, because the SDXL style-LoRA ecosystem is large. schnell's genuine edge is
+prompt adherence on complex scenes and text rendering — and most FLUX style LoRAs
+target *dev*, which is non-commercial, so the Apache-2.0 advantage quietly erodes
+as soon as you want a consistent look.
+
+**If FLUX is wanted anyway**, use `mflux` (MLX) rather than `diffusers`: it is the
+fast Apple path and supports 8-bit quantisation (~12 GB). `torch.compile` on MPS
+will not close the gap.
 
 ## Phases
 
-### Phase 1 — shared with the cache plan
+### Phase 1 — the generator adapter (shared, ~half a day)
 
-The generator protocol and an Imagen adapter. Do not build it twice. If the cache
-plan lands first, this phase is already done.
+Extract the inline Google client in `media/media_utils.py` `create_image` behind
+an injectable generator. **Settle the interface shape first**: the content-cache
+protocol returns a dict, the coherence-manager seam returns a path, and they are
+not the same thing. Pick bytes, and make the existing fake conform.
+
+Worth doing whether or not any local backend follows — it is the last open
+structural seam in `docs/portfolio-refinement.md`, and it lets the demo and tests
+inject rather than monkeypatch.
 
 ### Phase 2 — the local backend (~1–2 days)
 
-A second implementation of the same protocol, in a new module under `core/`,
-loading FLUX.1-schnell through `diffusers` with the MPS device.
+A second implementation behind that interface. Decisions to make explicitly:
 
-Decisions to make explicitly rather than by default:
-
-- **Steps.** schnell is a 4-step distilled model. It does not want 30 steps and
-  will not improve with them; running it like SDXL wastes minutes per image.
-- **Seeding.** Take a seed per image derived from the prompt, so a re-run
-  reproduces the frame. This matters for the cache plan — a deterministic
-  generator makes an exact-hash hit and a regeneration equivalent, which makes
-  cache correctness testable.
-- **Model residency.** Loading 24 GB per image is unusable. The pipeline
-  generates N images per episode in a loop, so the backend must hold the model
-  across calls and release it when the run ends.
-- **Where weights live.** Not in the repo, not in `data/`. A configurable cache
-  directory defaulting to the platform location, so the CI-parity guard in
-  `tests/conftest.py` — which already blocks model downloads and repo `data/`
-  access — stays satisfied.
+- **Steps and guidance.** Lightning is 4–8 steps. If FLUX: 4 steps,
+  `guidance_scale=0.0` (it is guidance-distilled; the dev default degrades it) and
+  `max_sequence_length=256`.
+- **dtype.** fp32 doubles a bandwidth-bound workload; fp16 NaNs in T5-XXL; bf16 is
+  correct but emulated on M1, so correct rather than fast. Set
+  `PYTORCH_ENABLE_MPS_FALLBACK=1` for op gaps.
+- **Residency and memory.** Hold the model across the per-episode loop.
+  `torch.mps.empty_cache()` between images — the MPS allocator does not return
+  memory to the OS. Do **not** use `enable_model_cpu_offload`: on unified memory
+  it is a memcpy within the same DRAM, pure cost. If using FLUX, encode all N
+  prompts up front, then free the text encoders before looping.
+- **Fixed resolution.** MPSGraph recompiles per unique shape.
+- **Weights location.** Configurable cache dir, never `data/`, so the CI-parity
+  guard stays satisfied.
 
 ### Phase 3 — selection and fallback (~half a day)
 
-A setting choosing the backend: Imagen, local, or the existing placeholder
-renderer. Default stays Imagen so nothing changes for an existing user.
+A setting choosing Imagen, local, or the existing placeholder renderer, defaulting
+to Imagen. The `b6fde06` lesson applies directly: missing `diffusers`, absent
+weights, insufficient memory and an MPS failure are four causes and each should
+degrade with its reason logged.
 
-The fallback chain is the interesting part. `media/media_utils.py` already has a
-placeholder title-card path for when generation is unavailable, and the
-degradation lesson from `b6fde06` applies directly: an optional backend has to be
-optional for every reason it can be unavailable. Missing `diffusers`, absent
-weights, insufficient memory, and an MPS failure are four different causes and
-each should degrade with its reason logged, not just the one that was thought of.
+**Add a fifth: swapping away from Imagen removes its content filtering.**
+FluxPipeline ships no safety checker, and this pipeline feeds it text derived from
+scraped transcripts. That is a deliberate decision, not an implementation detail.
 
-### Phase 4 — measure the tradeoff (~half a day)
+### Phase 4 — measure it (~1 day, not half)
 
-`image_generation` is already a timed telemetry stage, so the comparison is
-nearly free. Record for the same episode on both backends: wall-clock per image,
-total run time, and cost — which is a real measured number for Imagen and
-genuinely zero marginal for local.
+Per-episode timing is nearly free; **per-image timing is not instrumented** —
+`docs/operations.md` lists it under known unmeasured dimensions, and
+`image_generation` is one timer for all scenes. Phase 4 has to add that
+instrumentation, and must separate cold from warm, since the first image carries
+model load plus graph compilation.
 
-Write it into `docs/operations.md` next to the existing cost table. **The measured
-tradeoff is the artifact worth having**; "pluggable backends with numbers" reads
-considerably better than either backend alone.
+## Constraints
 
-Expected shape, to be replaced by measurement: roughly 30–60s per 1024×1024 image
-on this hardware at 4 steps, against seconds for the API. At 5–15 images per
-episode that is minutes versus seconds — acceptable for an offline batch pipeline
-with `--resume` already working, and unacceptable for anything interactive.
-
-## Constraints that must hold
-
-- **CI must not download 24 GB.** The parity guard already forces offline mode and
-  an empty model cache, so local-backend tests must use a fake pipeline object,
-  not real weights. Any test wanting real weights belongs behind the `network`
-  marker and will not run by default.
-- **`make demo` must keep working with no model present**, on the placeholder
-  path. The demo's value is that a stranger can run it in 26 seconds.
-- **`requirements-demo.txt` must not grow.** The slim set exists so the demo image
-  stays ~330 MB; `diffusers` belongs with the full install or in an extra.
+- CI must not download tens of GB; the parity guard already forces offline mode.
+- `make demo` must keep working with no model present.
+- `requirements-demo.txt` must not grow.
+- `diffusers` and `accelerate` are unpinned and absent; FluxPipeline needs
+  diffusers ≥0.30, and the T5 tokenizer wants `sentencepiece`, which is not in
+  `requirements.txt`.
+- First-run download is tens of GB. "Download died at 22 GB" is a likelier failure
+  than "insufficient memory"; use `allow_patterns` or a naive snapshot pulls the
+  single-file weights too.
 
 ## On prompts
 
-The coherence manager builds prompts from style and scene description rather than
-character likenesses, and that should not change with the backend. Running
-inference locally changes who hosts the compute, not the derivative-work position
-that `docs/adr/` already records as an open question. Keeping prompts to original
-scene description — what happens in a shot — rather than naming characters is
-both the safer position and, in practice, what the existing prompt construction
-already does.
+Prompts should stay with original scene description — what happens in a shot —
+rather than naming characters, which is what the existing style-prompt
+construction already does. Running inference locally changes who hosts the
+compute, not the derivative-work question that `docs/portfolio-refinement.md`
+records as open.
 
 ## Honest assessment
 
-The cost saving is real but secondary: image spend is bounded by episode count,
-and the unbounded-plot-point issue is a larger lever than the per-image price.
-The stronger reasons to do this are that it removes a paid dependency from the
-critical path, makes the pipeline runnable with no API key at full quality rather
-than placeholder quality, and produces a measured comparison between two real
-backends.
+The cost saving is secondary and the "no API key needed" claim was false. What
+this actually buys is a pluggable backend, a measured comparison between two real
+implementations, and images that cost nothing at the margin.
 
-If the goal is purely to spend less, the cache plan and a cap on plot points are
-cheaper and land sooner.
+Whether that is worth two or three days on a portfolio piece is a real question.
+Phase 1 is worth doing regardless. Phases 2–4 are a weekend project that produces
+a good story **only if Phase 4's measurement actually happens** — without it, this
+is a second code path with no evidence attached, which is the pattern this repo
+spent forty commits removing.
