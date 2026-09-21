@@ -45,6 +45,17 @@ saying what was wrong.
 | **[TRANSCRIPT_AGENT_GUIDE.md](TRANSCRIPT_AGENT_GUIDE.md)** | Transcript discovery across three sources, slug generation and quality scoring. |
 | **[CONTENT_CACHING_GUIDE.md](CONTENT_CACHING_GUIDE.md)** | The content cache API. **The module has no production call sites** — it is a tested library that is not wired into the pipeline. |
 
+## Plans — not yet built
+
+Forward-looking. Nothing in these describes behaviour that exists today; each
+states what it would change and what it deliberately does not.
+
+| File | What it is |
+|---|---|
+| **[content-cache-plan.md](content-cache-plan.md)** | Wiring `ContentCache` into the image path. It is fully built, tested, and has zero callers, so every scene is generated from scratch. Four phases, the last gated on looking at the output — a similarity hit returns a *different* scene's image. |
+| **[local-image-backend-plan.md](local-image-backend-plan.md)** | A local FLUX.1-schnell backend behind the same generator seam. Depends on Phase 1 of the cache plan; both need the same adapter and it should be built once. |
+| **[documentation-plan.md](documentation-plan.md)** | The documentation programme. Phases 1, 2, 3 and 5 are done; Phase 4 (a generated reference site) was declined on the record for a portfolio piece. |
+
 ## History — not current state
 
 Both of these describe the past on purpose. Neither should be read as a
