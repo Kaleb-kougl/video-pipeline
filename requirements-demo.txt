@@ -19,22 +19,24 @@
 #   * langchain-google-genai is omitted - the demo patches init_chat_model, so
 #     the Gemini provider package is never constructed. The langchain factory
 #     itself still imports, which is all the orchestrator needs at import time.
+#   * google-genai is omitted, and no longer for the reason it was once pinned.
+#     It was pinned because agents/video_agent.py did a bare
+#     `from google import genai` at module scope and WorkflowOrchestrator
+#     imports VideoGenerationAgent, so the demo could not start without it -
+#     the package was mandatory even though f2597bf had already made it
+#     optional in media/media_utils.py. That import is now guarded too
+#     (GENAI_AVAILABLE, and VideoGenerationAgent.build_client raises
+#     GeminiClientUnavailable at the point of use), so nothing on the demo path
+#     imports it any more. Verified, not assumed: the demo was re-run with
+#     `google.genai` blocked by an import hook and rendered the same MP4. The
+#     demo never builds a client in any case - the credentials are cleared
+#     twice (see scripts/demo.py::clear_credentials) and the run aborts unless
+#     build_image_generator() refuses to construct one.
 
 # LangChain core (prompt templates + the init_chat_model factory the demo patches)
 langchain==0.3.27
 langchain-core==0.3.72
 langchain-text-splitters==0.3.9
-
-# google-genai still has to be present, but no longer for the reason this comment
-# used to give. f2597bf made it an *optional* import in media/media_utils.py, so
-# that module now imports fine without it and degrades to placeholder frames and
-# silent audio. What still requires it is agents/video_agent.py, which does a
-# bare `from google import genai` at module scope; WorkflowOrchestrator imports
-# VideoGenerationAgent, so the demo cannot start without the package installed.
-# The demo never builds a client: the credentials are cleared (twice - see
-# scripts/demo.py::clear_credentials) and the run aborts unless
-# build_image_generator() refuses to construct one.
-google-genai>=0.8.0
 
 # Video and media processing - this is the part the demo actually exercises.
 moviepy==2.2.1

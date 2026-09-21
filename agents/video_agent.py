@@ -6,9 +6,40 @@ import logging
 import os
 from typing import Any
 
-from google import genai
+# google-genai is an *optional* dependency of this module, and always was in
+# substance: `generate_optimized_images` builds prompt strings and
+# `adaptive_duration_calculation` is arithmetic over word counts. Neither
+# touches the package. The only thing that ever did was the Gemini client
+# below, and an unguarded module-scope import of it made the whole agent - and,
+# through `agents/workflow_orchestrator.py`, the whole pipeline - unimportable
+# on a machine without the package, which is the opposite of optional.
+# `media/media_utils.py` (f2597bf) and `agents/character_analysis_agent.py`
+# (b6fde06) already take this shape: a guarded import, a module-level flag, and
+# a failure raised where the package is actually used.
+try:
+    from google import genai
+
+    GENAI_AVAILABLE = True
+except ImportError as exc:  # pragma: no cover - exercised by a subprocess test
+    genai = None  # type: ignore[assignment]
+    _GENAI_IMPORT_ERROR: str | None = str(exc) or "google-genai is not installed"
+    GENAI_AVAILABLE = False
+else:
+    _GENAI_IMPORT_ERROR = None
 
 logger = logging.getLogger(__name__)
+
+
+class GeminiClientUnavailable(RuntimeError):
+    """
+    No Gemini client could be built, and the message says why.
+
+    Raised at the point of use rather than at import time, so that an install
+    without google-genai still gets a usable ``VideoGenerationAgent`` - the
+    prompt and timing methods need nothing from the package - and only a caller
+    that actually reaches for the client is told what to install. The parallel
+    is ``media.media_utils.ImageGeneratorUnavailable``.
+    """
 
 
 class VideoGenerationAgent:
@@ -24,15 +55,52 @@ class VideoGenerationAgent:
         """
         Initialize the VideoGenerationAgent.
 
-        Sets up the Gemini AI client for image generation capabilities.
+        Attempts to set up the Gemini AI client, but never depends on it:
+        construction succeeds with ``self.client = None`` whatever goes wrong,
+        including google-genai not being installed at all. The two methods this
+        class exposes do not use the client, so an agent without one is fully
+        functional for everything the orchestrator asks of it.
         """
-        # Initialize Gemini client for AI image generation
+        # Attempted, not required. A caller that genuinely needs a client calls
+        # build_client() and gets an exception naming the reason; here the
+        # reason is logged and the agent carries on without one.
+        self.client: Any | None = None
         try:
-            genai.configure(api_key=os.getenv("GOOGLE_API_KEY", ""))
-            self.client = genai.GenerativeModel("gemini-pro")
+            self.client = self.build_client()
         except Exception as e:
             logger.warning(f"Failed to initialize Gemini client: {e}")
             self.client = None
+
+    def build_client(self) -> Any:
+        """
+        Build the Gemini client, or explain why it cannot be built.
+
+        This is the only part of this class that needs google-genai. It is a
+        method rather than inline constructor code so that the missing-package
+        failure has somewhere to be raised *at the point of use*, with a message
+        naming the package and how to install it.
+
+        Returns:
+            Any: A configured Gemini model client.
+
+        Raises:
+            GeminiClientUnavailable: google-genai is not installed.
+        """
+        if genai is None:
+            raise GeminiClientUnavailable(
+                f"google-genai is not installed ({_GENAI_IMPORT_ERROR}). "
+                "Install it with: pip install google-genai"
+            )
+
+        # NOTE: `configure`/`GenerativeModel` belong to the older
+        # `google-generativeai` package; the pinned `google-genai` exposes
+        # `genai.Client` instead, so this call raises AttributeError even when
+        # the package *is* installed and __init__ has always ended up with
+        # `self.client is None`. Left as-is deliberately: nothing reads
+        # `self.client`, and changing it would start constructing a real client
+        # on every pipeline run. Fixing it is a separate change.
+        genai.configure(api_key=os.getenv("GOOGLE_API_KEY", ""))
+        return genai.GenerativeModel("gemini-pro")
 
     def generate_optimized_images(
         self, plot_points: list[str], episode_context: dict[str, Any]
