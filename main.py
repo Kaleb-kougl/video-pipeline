@@ -36,6 +36,7 @@ from core.schemas import (
     ProcessingResult,
     RunStatus,
     SeasonRunReport,
+    enforce_scene_cap,
 )
 from media.format_exporters import (
     InstagramReelsExporter,
@@ -1202,18 +1203,44 @@ class AnimeVideoGenerator:
         Returns:
             Visual timing configuration
         """
+        video_config = self.settings.video_config
         total_seconds = target_minutes * 60
-        available_time = total_seconds * 0.8  # 80% for visuals, 20% for transitions/effects
+        # 80% for visuals, 20% for transitions/effects (configurable since the
+        # scene cap has to be derived from the same number).
+        available_time = total_seconds * video_config.visual_time_ratio
 
         concept_duration = available_time / concept_count
 
         # Apply min/max constraints
-        concept_duration = max(self.settings.video_config.min_concept_duration, concept_duration)
-        concept_duration = min(self.settings.video_config.max_concept_duration, concept_duration)
+        concept_duration = max(video_config.min_concept_duration, concept_duration)
+        concept_duration = min(video_config.max_concept_duration, concept_duration)
 
         # For 5-minute videos with 6 concepts, we want exactly 5.0 seconds per concept
         if target_minutes == 5 and concept_count == 6:
             concept_duration = 5.0
+
+        # Say so when the visuals cannot cover the target length.
+        #
+        # Each concept is clamped to `max_concept_duration`, so a target longer
+        # than `concept_count * max_concept_duration` cannot be filled no matter
+        # what the arithmetic above computes -- the encoder concatenates the
+        # image clips and the narration is cut to whatever they add up to. This
+        # predates the scene cap (a short summary has always been able to
+        # under-fill a long target), but the cap makes it reachable on purpose,
+        # so it gets reported rather than left to be discovered in the output.
+        filled = concept_count * concept_duration
+        if filled < available_time - 1e-6:
+            logger.warning(
+                "Visual timing under-fills the target: %d concepts x %.1fs = %.0fs of visuals "
+                "for a %d-minute target (%.0fs of visual time). %d concepts would be needed. "
+                "The video will be shorter than requested and the narration will be cut to fit.",
+                concept_count,
+                concept_duration,
+                filled,
+                target_minutes,
+                available_time,
+                video_config.scenes_to_fill(target_minutes),
+            )
 
         return {
             "concept_duration": concept_duration,
@@ -1394,6 +1421,20 @@ class AnimeVideoGenerator:
                     }
                 )
 
+            # Bound the paid work. One concept is one Imagen call, and the
+            # concept count is a function of how much prose the model chose to
+            # write, so without this a single response sets the image bill for
+            # the season video. Capped here, at the single place concepts are
+            # produced, so that images, per-concept durations and the sentence
+            # list handed to the encoder cannot drift apart downstream. It runs
+            # after the 5-concept floor above, so a cap set below that floor
+            # wins: a cost ceiling has to be a ceiling.
+            concepts = enforce_scene_cap(
+                concepts,
+                self.settings.video_config.max_scenes,
+                context="season summary concepts",
+            )
+
             # Calculate adaptive timing for all concepts
             visual_timing = self._calculate_visual_timing(target_minutes, len(concepts))
 
@@ -1415,6 +1456,14 @@ class AnimeVideoGenerator:
                 }
                 for i in range(5)
             ]
+
+            # Subject to the same ceiling: this path still renders one paid
+            # image per concept, and a cap set below five must hold here too.
+            fallback_concepts = enforce_scene_cap(
+                fallback_concepts,
+                self.settings.video_config.max_scenes,
+                context="season summary fallback concepts",
+            )
 
             # Apply adaptive timing to fallback concepts
             visual_timing = self._calculate_visual_timing(target_minutes, len(fallback_concepts))

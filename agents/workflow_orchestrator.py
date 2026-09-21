@@ -19,12 +19,13 @@ from agents.discovery_agent import EpisodeDiscoveryAgent
 from agents.quality_agent import QualityAssuranceAgent
 from agents.transcript_agent import TranscriptDiscoveryAgent
 from agents.video_agent import VideoGenerationAgent
+from config.settings import get_settings
 from core.adaptive_quality_manager import AdaptiveQualityManager
 from core.character_episode_enhancer import EpisodeCharacterEnhancer
 from core.database import DatabaseManager
 from core.intelligent_format_adapter import IntelligentFormatAdapter
 from core.protocols import CharacterAnalyzer, ChatModel
-from core.schemas import Episode_Summary_Schema, ProcessingResult
+from core.schemas import Episode_Summary_Schema, ProcessingResult, enforce_scene_cap
 from core.telemetry import RunTelemetry
 from core.visual_coherence_manager import VisualCoherenceManager
 from media.media_utils import create_images, mp4_file_enhanced, wave_file
@@ -488,6 +489,21 @@ class WorkflowOrchestrator:
         logger.info("Starting Phase 2 enhanced media generation")
         media_started = time.perf_counter()
 
+        # Bound the paid work before any of it is scheduled.
+        #
+        # `episode_data["plot_points"]` comes straight from a model response and
+        # nothing upstream limits its length; one image is rendered per entry.
+        # `plot_points` below is therefore the only list this method may use
+        # from here on: scenes, durations and the sentence list handed to the
+        # encoder all have to agree, since `mp4_file_enhanced` resolves images
+        # by index. The untruncated list stays in `episode_data` and in the
+        # database - it is the *images* that are capped, not the summary.
+        plot_points = enforce_scene_cap(
+            episode_data["plot_points"],
+            get_settings().video_config.max_scenes,
+            context=f"{episode_data['show']} S{episode_data['season']}E{episode_data['episode']}",
+        )
+
         # Phase 2 Step 1: Character Analysis Integration
         # Analyze characters and enhance episode with character-aware timing
         if self.character_analysis_agent is None or self.character_enhancer is None:
@@ -519,7 +535,7 @@ class WorkflowOrchestrator:
                             "base_duration": 3.0,  # Default base duration
                             "characters": [],  # Will be filled by character analysis
                         }
-                        for plot_point in episode_data["plot_points"]
+                        for plot_point in plot_points
                     ]
                 }
 
@@ -540,7 +556,7 @@ class WorkflowOrchestrator:
             enhanced_episode = {
                 "scenes": [
                     {"prompt": plot_point, "duration": 3.0, "enhanced_prompt": plot_point}
-                    for plot_point in episode_data["plot_points"]
+                    for plot_point in plot_points
                 ]
             }
 
@@ -616,9 +632,7 @@ class WorkflowOrchestrator:
             logger.info("Using character-aware timing")
         else:
             # Fallback to original adaptive duration calculation
-            durations = self.video_agent.adaptive_duration_calculation(
-                episode_data["plot_points"], wave_length
-            )
+            durations = self.video_agent.adaptive_duration_calculation(plot_points, wave_length)
             logger.info("Using fallback adaptive timing")
 
         # Step 7: Create the final MP4 video file
@@ -627,7 +641,7 @@ class WorkflowOrchestrator:
                 show=episode_data["show"],
                 season=episode_data["season"],
                 episode=episode_data["episode"],
-                sentences=episode_data["plot_points"],
+                sentences=plot_points,
                 durations=durations,
             )
 

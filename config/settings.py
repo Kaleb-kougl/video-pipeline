@@ -29,6 +29,7 @@ Example Usage:
     print(f"Video FPS: {settings.video_fps}")
 """
 
+import math
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -80,6 +81,40 @@ class VideoConfig(BaseModel):
         description="Maximum seconds per visual concept",
     )
 
+    # Share of the runtime given to visual concepts; the remainder is budgeted
+    # for transitions and effects. Previously hard-coded as `* 0.8` inside
+    # AnimeVideoGenerator._calculate_visual_timing.
+    visual_time_ratio: float = Field(
+        default=0.80,
+        gt=0.0,
+        le=1.0,
+        description="Fraction of total runtime allotted to visual concepts",
+    )
+
+    # ---- Scene budget -----------------------------------------------------
+    # Every scene is one paid image call (`create_images` -> one Imagen call
+    # per element), and the number of scenes comes from a model response, so
+    # without a ceiling one Gemini call decides the image bill for a video.
+    # This is that ceiling.
+    #
+    # The default is derived, not guessed: it is the number of scenes needed to
+    # fill the longest supported video at the longest permitted per-scene
+    # duration -- ceil(15 min * 60 * 0.80 / 15.0 s) = 48. Set this way the cap
+    # bounds worst-case spend without being able to shorten any video the
+    # current timing rules could otherwise have filled. See `scenes_to_fill`,
+    # which computes the same quantity for an arbitrary target length.
+    #
+    # Lowering it is a legitimate cost/quality trade: below `scenes_to_fill
+    # (target_minutes)` the visuals can no longer cover the narration, and
+    # `_calculate_visual_timing` logs a warning saying so rather than quietly
+    # producing a short video.
+    max_scenes: int = Field(
+        default=48,
+        ge=1,
+        le=200,
+        description="Maximum scenes (and therefore paid images) generated per video",
+    )
+
     @field_validator("max_concept_duration")
     @classmethod
     def validate_max_greater_than_min(cls, v, info):
@@ -91,6 +126,28 @@ class VideoConfig(BaseModel):
                     f"max_concept_duration ({v}) must be greater than min_concept_duration ({min_duration})"
                 )
         return v
+
+    def scenes_to_fill(self, target_minutes: float) -> int:
+        """
+        Scenes needed to cover ``target_minutes`` at ``max_concept_duration``.
+
+        Fewer scenes than this cannot fill the target length, because each one
+        is clamped to at most ``max_concept_duration`` seconds on screen. Used
+        to derive the default ``max_scenes`` and to detect, at runtime, a cap
+        that will leave a video short of its target.
+
+        Args:
+            target_minutes: Target video length in minutes.
+
+        Returns:
+            int: The minimum scene count that can fill the target length.
+
+        Example:
+            >>> VideoConfig().scenes_to_fill(15)
+            48
+        """
+        visual_seconds = target_minutes * 60 * self.visual_time_ratio
+        return math.ceil(visual_seconds / self.max_concept_duration)
 
 
 class Settings(BaseModel):

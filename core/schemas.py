@@ -2,10 +2,17 @@
 Pydantic schemas for data validation and structure definition.
 """
 
+import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
+from typing import TypeVar
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 class TaskStatus(Enum):
@@ -124,9 +131,72 @@ class Episode_Summary_Schema(BaseModel):
     season: str = Field(description="The numerical season of the show")
     episode: str = Field(description="The numerical episode of the show")
     youtube_transcript: str = Field(description="Summary of the entire episode.")
+    # No `max_length` here on purpose. A schema constraint would be sent to the
+    # provider as `maxItems` and enforced by pydantic on the way back, which
+    # turns a merely verbose model response into a hard ValidationError that
+    # fails the whole episode -- a worse outcome than the cost it would prevent,
+    # and an unevaluated change to the prompt contract besides. The list is
+    # bounded where it is spent instead: see `enforce_scene_cap` below, applied
+    # in `WorkflowOrchestrator.generate_all_media`. The full list is still
+    # persisted; only the number of *images* is capped.
     plot_points: list[str] = Field(
         description="Single sentence summaries of major plot points in this episode of the show"
     )
+
+
+def enforce_scene_cap(scenes: Sequence[T], limit: int, *, context: str) -> list[T]:
+    """
+    Bound a model-decided scene list to at most ``limit`` entries.
+
+    Every scene becomes one paid image call, and the scene count is decided by a
+    nondeterministic model response, so this is the one place that stops a
+    single Gemini reply from setting the image bill for a video. Callers must
+    use the returned list for *everything* downstream -- prompts, durations and
+    the sentence list handed to ``mp4_file_enhanced`` -- because the encoder
+    looks images up by index and zips sentences against durations; capping one
+    of the three and not the others produces a missing-file crash or a silently
+    mistimed video.
+
+    Truncation is plain "keep the first ``limit``". It is order-preserving,
+    deterministic and trivially auditable against the log line. Its known
+    weakness is that it drops the end of the story, which is why the default cap
+    (``VideoConfig.max_scenes``) is set high enough to bind only on a runaway
+    response rather than on ordinary output: a sampler that kept the narrative
+    span would trade that rare, loudly-logged case for permanent index
+    arithmetic on every run.
+
+    Dropping scenes is never silent -- a truncation logs at WARNING with both
+    the produced and the kept count.
+
+    Args:
+        scenes: The model-produced items, one per intended image.
+        limit: Maximum number to keep; must be at least 1.
+        context: Human-readable identifier for the log line (e.g. an episode ref).
+
+    Returns:
+        list: ``scenes`` unchanged when it already fits, otherwise its first
+        ``limit`` entries.
+
+    Raises:
+        ValueError: If ``limit`` is less than 1.
+    """
+    if limit < 1:
+        raise ValueError(f"scene cap must be at least 1, got {limit}")
+
+    produced = len(scenes)
+    if produced <= limit:
+        return list(scenes)
+
+    logger.warning(
+        "Scene cap applied for %s: model produced %d scenes, generating %d "
+        "(dropped %d). Each scene is one paid image call; raise "
+        "video_config.max_scenes to keep more.",
+        context,
+        produced,
+        limit,
+        produced - limit,
+    )
+    return list(scenes[:limit])
 
 
 class EpisodeConfig(BaseModel):
