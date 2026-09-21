@@ -3,6 +3,8 @@
 The SQLite schema in `core/database.py`, table by table: what each column means,
 what writes it and when. Read off the DDL and the writing methods at `d98476a`;
 column lists are transcribed from the `CREATE TABLE` statements, not summarised.
+Re-read against `d58f1c7`, which added `core.schemas.enforce_scene_cap` without
+changing any column, type or writer.
 
 <!-- verified: 7e48b43 sources: core/database.py, core/schemas.py -->
 
@@ -57,7 +59,7 @@ One row per (show, season, episode). Both content store and state machine.
 | `show`, `season`, `episode` | TEXT NOT NULL | insert. `UNIQUE(show, season, episode)` is the real key; **all three are strings**, and the run methods coerce with `str()` |
 | `url` | TEXT NOT NULL | `save_episode`. `begin_episode` inserts `''` when creating a placeholder |
 | `transcript`, `summary` | TEXT | `save_episode` |
-| `plot_points` | TEXT | `save_episode`, as `json.dumps(list)` or NULL |
+| `plot_points` | TEXT | `save_episode`, as `json.dumps(list)` or NULL. Stored **untruncated**: `enforce_scene_cap` bounds the number of *images* rendered, not the summary persisted, so a row may list more plot points than the video has scenes |
 | `status` | TEXT DEFAULT `'pending'` | `begin_episode` → `in_progress`; `complete_episode` → `succeeded`/`failed`. Values are `core.schemas.EpisodeStatus` |
 | `created_at`, `updated_at` | TIMESTAMP | defaults / every write |
 | `attempts` *(v1)* | INTEGER NOT NULL DEFAULT 0 | `begin_episode`, `+1` per attempt across all runs |

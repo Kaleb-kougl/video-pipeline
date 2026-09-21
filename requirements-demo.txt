@@ -25,8 +25,15 @@ langchain==0.3.27
 langchain-core==0.3.72
 langchain-text-splitters==0.3.9
 
-# google-genai is imported at module scope by media/media_utils.py, so it has to
-# be present even though the demo never builds a client (no API key is set).
+# google-genai still has to be present, but no longer for the reason this comment
+# used to give. f2597bf made it an *optional* import in media/media_utils.py, so
+# that module now imports fine without it and degrades to placeholder frames and
+# silent audio. What still requires it is agents/video_agent.py, which does a
+# bare `from google import genai` at module scope; WorkflowOrchestrator imports
+# VideoGenerationAgent, so the demo cannot start without the package installed.
+# The demo never builds a client: the credentials are cleared (twice - see
+# scripts/demo.py::clear_credentials) and the run aborts unless
+# build_image_generator() refuses to construct one.
 google-genai>=0.8.0
 
 # Video and media processing - this is the part the demo actually exercises.

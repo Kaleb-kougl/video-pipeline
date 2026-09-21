@@ -1,12 +1,14 @@
 # Operations: cost and latency
 
 What a run costs before you start it, what the instrument measures, and what it
-does not. Derived from `core/telemetry.py`, `agents/workflow_orchestrator.py`
-and `media/media_utils.py` at `689c889`.
+does not. Derived from `core/telemetry.py`, `agents/workflow_orchestrator.py`,
+`config/settings.py`, `core/schemas.py`, `main.py` and `media/media_utils.py`,
+re-read against the scene cap at `d58f1c7` and the image-generator seam at
+`f2597bf`.
 [telemetry.md](telemetry.md) is the design rationale; this file is the operator
 view. For procedures see [runbook.md](runbook.md).
 
-<!-- verified: 1875ce6 sources: core/telemetry.py, agents/workflow_orchestrator.py, media/media_utils.py -->
+<!-- verified: 1875ce6 sources: core/telemetry.py, agents/workflow_orchestrator.py, media/media_utils.py, config/settings.py, core/schemas.py, main.py -->
 
 ## What a run costs in API calls
 
@@ -15,16 +17,70 @@ Counted from the call sites, not estimated. Per episode, with `--full`:
 | Calls | Service | Model | Where | Metered? |
 |---|---|---|---|---|
 | 1 | Gemini text | `gemini-2.0-flash` | `generate_structured_summary` → `model_with_structure.invoke` | **yes** — the only token-instrumented call, labelled `episode_summary` |
-| *N* | Imagen | `imagen-3.0-generate-002` | `create_images` → one `create_image` per item | no |
+| *N* ≤ 48 | Imagen | `imagen-3.0-generate-002` | `create_images` → one `create_image` per item, capped at `VideoConfig.max_scenes` | no |
 | 1 | Gemini TTS | `gemini-2.5-flash-preview-tts` | `wave_file`, one call for the whole narration | no |
 | 0 | — | — | character enrichment: ChromaDB + sentence-transformers, local | n/a |
 
-***N* is not fixed.** `create_images` is called once per element of
-`enhanced_episode["scenes"]`, which is built one-per-`plot_point`, and the plot
-points come back from the model. Nothing in the code caps the count, so the
-image bill per episode is decided by that one Gemini response. This is the
-single largest source of cost variance in a run and it is currently unbounded —
-if you need a ceiling, that is where to put one.
+***N* is bounded: at most `VideoConfig.max_scenes`, which defaults to 48.**
+`create_images` is called once per element of `enhanced_episode["scenes"]`,
+which is built one-per-`plot_point`, and the plot points still come back from a
+model — but `core.schemas.enforce_scene_cap` truncates the list at the point of
+use, so one Gemini response can no longer decide an unbounded image bill. Both
+paid paths are capped: the episode path in
+`WorkflowOrchestrator.generate_all_media`, and the season-summary path in
+`AnimeVideoGenerator._parse_summary_to_concepts` (main and five-concept
+fallback alike), which was independently unbounded.
+
+**Where 48 comes from.** It is derived, not picked:
+`ceil(max_duration_minutes × 60 × visual_time_ratio / max_concept_duration)` =
+`ceil(15 × 60 × 0.80 / 15.0)` = 48 — the scenes needed to fill the longest
+supported video at the longest permitted per-scene duration.
+`visual_time_ratio` (0.80, the share of runtime given to visuals) is a named
+field for exactly this reason; it used to be a bare `* 0.8` inside
+`_calculate_visual_timing`. Set this way the cap bounds worst-case spend
+without being able to shorten any video the current timing rules could
+otherwise have filled.
+
+```python
+from config.settings import get_settings
+
+video_config = get_settings().video_config
+print(video_config.max_scenes)  # 48
+print(video_config.scenes_to_fill(5), video_config.scenes_to_fill(15))  # 16 48
+```
+
+**Changing it.** There is no CLI flag and no environment variable: `Settings` is
+a plain `BaseModel`, not a `BaseSettings`, so the `env_prefix` in its inner
+`Config` is inert. `VideoConfig` is frozen, so replace it whole before anything
+constructs an orchestrator — or edit the default in `config/settings.py`:
+
+```python
+from config.settings import VideoConfig, update_settings
+
+update_settings(video_config=VideoConfig(max_scenes=12))
+```
+
+`max_scenes` is validated `1 ≤ n ≤ 200`. Lowering it is a real cost/quality
+trade rather than a free win: below `scenes_to_fill(target_minutes)` the visuals
+can no longer cover the narration, and `_calculate_visual_timing` logs a
+WARNING naming the shortfall and the concept count that would be needed rather
+than quietly rendering a short video. The default never trips that warning.
+
+**Truncation is lossy and loud.** It keeps the first `max_scenes` entries, so
+what gets dropped is the end of the episode — chosen over evenly-spaced
+sampling because the cap is set to bind only on a runaway response. A
+truncation logs at WARNING with the count the model produced, the count being
+generated and the number dropped, naming `video_config.max_scenes` as the knob.
+Nothing is discarded silently. Only the *images* are capped: the untruncated
+plot-point list is still persisted to `episodes.plot_points`, so the summary
+in the database can legitimately list more scenes than the video renders.
+
+**What is still variable.** A ceiling is not a quota. A response *under* the cap
+spends exactly what it asks for, so per-episode image spend still ranges freely
+from one call to `max_scenes` and remains the largest single source of cost
+variance in a run. The change made that variance bounded and knowable in
+advance; it did not make it fixed. `max_scenes` is the number to take to a
+worst-case billing estimate, not the number to expect from a typical run.
 
 A season batch is this multiplied by the number of episodes not skipped. A
 resumed run pays nothing for an episode recorded as `succeeded`: no discovery,
@@ -145,7 +201,11 @@ table. It is real output, and it is unrepresentative on purpose: the demo
 replaces every paid boundary. `summarization` at 34 ms is a JSON file being
 replayed; `image_generation` at 0.33 s is PIL drawing title cards;
 `audio_synthesis` is a locally synthesised tone; `character_enrichment` at ~0 is
-a canned dictionary. The resulting 94.9% share for `video_encode` is an artifact
+a canned dictionary. One caveat on that 0.33 s: it was measured before
+`f2597bf`, when the demo was still building a real Imagen client per frame and
+having the connection blocked by its own socket guard, so it covers a little
+work the demo no longer does. The order of magnitude is unaffected — it is
+still PIL — but the table has not been re-measured. The resulting 94.9% share for `video_encode` is an artifact
 of everything else being faked — **do not read it as "the pipeline is
 encode-bound"**.
 

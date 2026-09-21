@@ -61,3 +61,39 @@ Accepted costs:
   monkeypatch. That is the last seam, and the one the demo depends on.
 - Module-level `moviepy` imports mean "instantiable in a test" still requires
   import-level care.
+
+## Update — 2026-09-21 (`f2597bf`)
+
+The Decision above is left exactly as written. It records what was true at
+`e49717c`, and it points a reader at `git show e49717c` as the primary source;
+editing the count to match today's code would make the record disagree with the
+commit it cites, and would erase the fact that the bar was applied consistently
+on two different days to two different answers. Amendment, not rewrite.
+
+**`core/protocols.py` now defines four runtime-checkable Protocols, not three.**
+`f2597bf` added `ImageFileGenerator` — `generate_image(prompt, destination) ->
+str`. It cleared the same bar the original three cleared, and for the same
+reason: it had two implementations the moment it landed
+(`media.media_utils.ImagenImageGenerator` and `tests.conftest.FakeImageGenerator`),
+rather than being justified by symmetry.
+
+**One of the three "no protocol on purpose" cases was reclassified, not
+reversed.** The Decision lists the visual-coherence render callable as having no
+production implementation. That ceased to be true when `create_image` stopped
+building a `genai.Client` inline and started taking an injectable generator, so
+the case for exclusion expired and the protocol followed. The other two still
+hold for the stated reasons: `DatabaseManager` has one implementation, and
+`content_cache`'s `generate_image(prompt) -> dict` turned out not to be an image
+generator at all but a cache-payload callback — it never renders anything — so
+it stays duck-typed, and its fake was renamed `FakeImagePayloadSource` to stop
+the two shapes being mistaken for one.
+
+**The accepted cost "the media-render seam is still patched, not injected" is
+partly paid down.** `create_image` now accepts an `image_generator`, and
+`build_image_generator()` raises `ImageGeneratorUnavailable` rather than
+returning a half-built client. But `create_images` does not forward a generator
+to `create_image`, so no production caller injects one yet, and `create_images`,
+`wave_file` and `mp4_file_enhanced` remain module-level calls that the tests and
+the demo monkeypatch. The other accepted costs are untouched:
+`ImageFileGenerator` is not a `WorkflowOrchestrator` parameter, so the ten
+`Any`-typed parameters and the fourteen keyword-only ones are unchanged.

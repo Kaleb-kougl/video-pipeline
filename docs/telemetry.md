@@ -148,20 +148,20 @@ without the numbers being taken again.
 
 ```
 ------------------------------------------------------------------------------
-  RUN TELEMETRY  Neon Lantern Brigade_2026-09-18T21:56:15.875216
+  RUN TELEMETRY  Neon Lantern Brigade_2026-09-21T13:22:03.041531
 ------------------------------------------------------------------------------
   stage                     doc      wall_s    share  status
   content_extraction        1-2      0.0006     0.0%  ok
-  summarization               2      0.0345     0.3%  ok
-  persistence                 -      0.0009     0.0%  ok
+  summarization               2      0.0352     0.3%  ok
+  persistence                 -      0.0008     0.0%  ok
   character_enrichment        3      0.0000     0.0%  ok
-  quality_profile             -      0.1101     0.9%  ok
+  quality_profile             -      0.1032     0.9%  ok
   prompt_construction         4      0.0000     0.0%  ok
-  image_generation            4      0.3316     2.8%  ok
-  audio_synthesis             5      0.1241     1.1%  ok
-  video_encode                5     11.1431    94.9%  ok
-  measured total                    11.7449   100.0%
-  run wall-clock 11.745s (0.0002s outside instrumented stages)
+  image_generation            4      0.2565     2.1%  ok
+  audio_synthesis             5      0.1252     1.0%  ok
+  video_encode                5     11.4754    95.7%  ok
+  measured total                    11.9970   100.0%
+  run wall-clock 11.997s (0.0002s outside instrumented stages)
 
   LLM calls: 1
     episode_summary       tokens unavailable (0.000s)
@@ -179,14 +179,23 @@ every paid boundary (see the banner `make demo` prints), so:
 - `summarization` at 34 ms is the cost of replaying a JSON file. A real Gemini
   call over a full transcript is seconds, and it is the stage whose latency
   varies most.
-- `image_generation` at 0.33 s is PIL drawing five captioned title cards. Real
+- `image_generation` at 0.26 s is PIL drawing five captioned title cards. Real
   Imagen generation is network-bound and orders of magnitude slower.
+
+  This number was **0.33 s before `f2597bf`**, and the difference is instructive.
+  `scripts/demo.py` cleared `GOOGLE_API_KEY`, but `moviepy.config` calls
+  `load_dotenv()` on import and put it back, so the "offline" demo was building
+  a real Imagen client per frame and being stopped by the socket guard. The old
+  figure included that aborted work, and the old caption — "PIL drawing title
+  cards" — described only part of what was being timed. The demo now re-clears
+  credentials after the heavy imports and verifies no generator can be built, so
+  the stage measures what the caption says.
 - `audio_synthesis` at 0.12 s is a locally synthesised tone. Real Gemini TTS is
   a network call.
 - `character_enrichment` at ~0 is a canned dictionary. The real path embeds
   dialogue into ChromaDB with sentence-transformers.
 - `Tokens: unavailable` is correct and expected here: no model was called.
-- The `94.9%` share for `video_encode` is an artifact of everything else being
+- The `95.7%` share for `video_encode` is an artifact of everything else being
   faked. **Do not read it as "the pipeline is encode-bound."**
 
 What the demo numbers *are* good for: the encode and the HTML parse are real

@@ -1,7 +1,8 @@
 # Runbook
 
 Normal operating procedures. Every command here was run, or read off the source
-that implements it, at `d98476a`. For failures see
+that implements it, at `d98476a`; the demo section was re-read against
+`f2597bf`. For failures see
 [troubleshooting.md](troubleshooting.md); for cost and latency see
 [operations.md](operations.md); for what the database holds see
 [data-model.md](data-model.md).
@@ -218,11 +219,20 @@ make clean-demo  # delete what it wrote
 ```
 
 `scripts/demo.py` clears `GOOGLE_API_KEY`, `GEMINI_API_KEY` and
-`GOOGLE_APPLICATION_CREDENTIALS` before importing anything that reads them, then
-monkeypatches `socket.connect` so an off-box call raises `DemoMadeANetworkCall`.
-"No network" is checked, not promised. Its first step renders the branding intro
-clip through a real MoviePy encode, which doubles as an ffmpeg preflight before
-the main render starts.
+`GOOGLE_APPLICATION_CREDENTIALS` before importing anything that reads them — and
+then **again** after the heavy imports, because `moviepy.config` calls
+`dotenv.load_dotenv()` at import time and puts the key straight back from the
+repository's own `.env`. Until `f2597bf` it cleared them only once, so on a
+developer machine with a key in `.env` this "offline" demo was building a real
+Imagen client and being saved only by the socket guard; the giveaway was the
+fallback line reading "AI generation failed" rather than "no key".
+
+Both offline claims are checked rather than promised. `socket.connect` is
+monkeypatched so an off-box call raises `DemoMadeANetworkCall`, and
+`enforce_offline_image_generation` calls `build_image_generator()` up front and
+aborts the run unless it raises `ImageGeneratorUnavailable`. Its first step
+renders the branding intro clip through a real MoviePy encode, which doubles as
+an ffmpeg preflight before the main render starts.
 
 **Exercised for real:** BeautifulSoup parsing, content extraction and quality
 validation, SQLite persistence (a real `.db` is written), character-weighted

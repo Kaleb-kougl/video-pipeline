@@ -1,11 +1,12 @@
 # Troubleshooting
 
 Failure modes that have actually happened, each as **symptom → cause → action**.
-Every one was checked against the source at `7e48b43`; where the behaviour is
+Every one was checked against the source at `7e48b43`, and the paid-path
+section re-read against `d58f1c7` and `f2597bf`; where the behaviour is
 surprising the file and function that produces it is named so you can confirm it
 yourself.
 
-<!-- verified: 1875ce6 sources: main.py, agents/transcript_source_agent.py, agents/character_analysis_agent.py, agents/workflow_orchestrator.py, media/media_utils.py -->
+<!-- verified: 1875ce6 sources: main.py, agents/transcript_source_agent.py, agents/character_analysis_agent.py, agents/workflow_orchestrator.py, media/media_utils.py, core/schemas.py, config/settings.py -->
 
 For normal operation see [runbook.md](runbook.md).
 
@@ -200,14 +201,53 @@ narration. `🖼️ Using FREE PLACEHOLDER IMAGE` / `🎤 Using FREE SILENT AUDI
 the output.
 
 **Cause.** `create_image` and `wave_file` catch every exception and fall back.
-Three cases are distinguished in the printed message: no `GOOGLE_API_KEY`, a
-`billed users` / `INVALID_ARGUMENT` response (Imagen and Gemini TTS require a
-billing-enabled project), or any other failure.
+`create_image` distinguishes **four** cases in the printed message (see
+`_report_image_fallback`): no `GOOGLE_API_KEY`, a `billed users` /
+`INVALID_ARGUMENT` response (Imagen and Gemini TTS require a billing-enabled
+project), `google-genai` not installed at all, or any other failure. Since
+`f2597bf` the generator is *constructed* inside the same `try`
+(`build_image_generator`), so a missing key, a missing client library and a
+credential the SDK refuses to build a client from all reach the placeholder with
+the reason logged, instead of the missing package raising at import time. An
+Imagen response carrying zero images now raises into the "AI generation failed"
+branch as well: it used to fall out of the `try` and draw a placeholder while
+printing and logging nothing, which was the one way to get an unexplained title
+card.
 
 **Action.** Read the printed line — it says which. Note the pipeline still
 reports the episode as **succeeded**: the fallback is a deliberate degradation,
 not a failure, so the run's `succeeded` count is not evidence that real artwork
 or narration was produced.
+
+### The video has fewer scenes than the summary, or is shorter than asked for
+
+**Symptom.** A run logs `Scene cap applied for <show> S1E4: model produced 61
+scenes, generating 48 (dropped 13)` and the video stops before the story does.
+Or it logs `Visual timing under-fills the target: ... N concepts would be
+needed` and the file is shorter than the requested length.
+
+**Cause.** Two halves of the same cost control, both deliberate, both loud.
+`core.schemas.enforce_scene_cap` bounds the image count at
+`VideoConfig.max_scenes` (default 48), because one scene is one paid Imagen call
+and the scene count comes from a nondeterministic model response. Truncation is
+plain first-N, so what it drops is the end of the episode; the untruncated list
+is still written to `episodes.plot_points`, and only the *images* are capped.
+Separately, `AnimeVideoGenerator._calculate_visual_timing` warns when the
+concepts it was given cannot cover the target length — each is clamped to
+`max_concept_duration`, so filling *n* minutes takes
+`VideoConfig.scenes_to_fill(n)` of them, 16 for five minutes and 48 for fifteen.
+Only the season-summary path (`_parse_summary_to_concepts`) reaches that
+warning; the per-episode path times scenes with
+`adaptive_duration_calculation`. The default cap never trips it — a lowered one
+can.
+
+**Action.** Neither is a failure, and the episode is still recorded as
+`succeeded`, so check the log rather than the status. To keep more scenes, raise
+`max_scenes` and accept the image bill — there is no CLI flag or environment
+variable for it, see
+[operations.md](operations.md#what-a-run-costs-in-api-calls). If the video is
+short, the warning names the concept count that would have been needed: raise
+the cap to at least that, or ask for a shorter target.
 
 ### `--format tiktok` (or any non-standard format) produces no file
 
